@@ -74,7 +74,7 @@ fn build_tree(entries: Vec<TreeStruct>) -> io::Result<[u8; 20]> {
     Ok(hash)
 }
 
-fn create_objects(path: &Path) -> io::Result<[u8; 20]> {
+fn create_objects(path: &Path, ignore: &[String]) -> io::Result<[u8; 20]> {
     let mut entries: Vec<TreeStruct> = Vec::new();
 
     let mode_dir = "40000";
@@ -83,12 +83,17 @@ fn create_objects(path: &Path) -> io::Result<[u8; 20]> {
     if path.is_dir() {
         for entry in fs::read_dir(path)? {
             let path = entry?.path();
-            if path.file_name().unwrap() == ".denali" {
+            let name = path.file_name().unwrap().to_string_lossy();
+
+            if ignore
+                .iter()
+                .any(|rule| name == *rule || path.ends_with(rule))
+            {
                 continue;
             }
 
             if path.is_dir() {
-                let hash = create_objects(&path).unwrap();
+                let hash = create_objects(&path, ignore).unwrap();
                 entries.push(TreeStruct {
                     mode: mode_dir.to_string(),
                     name: path.file_name().unwrap().to_os_string(),
@@ -104,12 +109,18 @@ fn create_objects(path: &Path) -> io::Result<[u8; 20]> {
             }
         }
     } else {
-        let hash = hash_file(path).unwrap();
-        entries.push(TreeStruct {
-            mode: mode_file.to_string(),
-            name: path.file_name().unwrap().to_os_string(),
-            hash: hash,
-        });
+        let name = path.file_name().unwrap().to_string_lossy();
+        if !ignore
+            .iter()
+            .any(|rule| name == *rule || path.ends_with(rule))
+        {
+            let hash = hash_file(path).unwrap();
+            entries.push(TreeStruct {
+                mode: mode_file.to_string(),
+                name: path.file_name().unwrap().to_os_string(),
+                hash: hash,
+            });
+        }
     }
 
     let hash = build_tree(entries).unwrap();
@@ -124,13 +135,35 @@ pub fn add(path: &Path) -> io::Result<()> {
         return Ok(());
     }
 
-    let hash = create_objects(path).unwrap();
+    let ignore_file = Path::new(".denaliignore");
+
+    let mut ignore: Vec<String> = vec![".denali".into()];
+
+    if ignore_file.exists() && ignore_file.is_file() {
+        let data = fs::read_to_string(ignore_file)?;
+        for line in data.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+            ignore.push(trimmed.to_string());
+        }
+    }
+
+    let hash = create_objects(path, &ignore).unwrap();
 
     let head_dir = store.join("refs").join("heads");
     fs::create_dir_all(&head_dir).unwrap();
     let head = head_dir.join("main");
     let hex = hex::encode(hash);
     fs::write(&head, hex.as_bytes()).unwrap();
+
+    let head_path = Path::new("refs/heads");
+    let head_file = store.join("HEAD");
+    let mut head_content: Vec<u8> = Vec::new();
+    let head_text = format!("ref: {}", head_path.join("main").to_str().unwrap());
+    head_content.extend_from_slice(head_text.as_bytes());
+    fs::write(head_file, &head_content).unwrap();
 
     Ok(())
 }
