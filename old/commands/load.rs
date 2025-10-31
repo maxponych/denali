@@ -20,16 +20,8 @@ fn restore_file(hash: String, dest: &Path) -> io::Result<()> {
     file.read_to_end(&mut blob_comp)?;
 
     let mut decoder = ZlibDecoder::new(&blob_comp[..]);
-    let mut blob = Vec::new();
-    decoder.read_to_end(&mut blob).unwrap();
-
-    let mut i = 0;
-    while blob[i] != 0 {
-        i += 1;
-    }
-    i += 1;
-
-    let content = &blob[i..];
+    let mut content = Vec::new();
+    decoder.read_to_end(&mut content).unwrap();
 
     let mut out = fs::File::create(dest).unwrap();
     out.write_all(&content).unwrap();
@@ -41,10 +33,6 @@ fn parse_tree(tree: &Vec<u8>) -> io::Result<Vec<TreeStruct>> {
     let mut entries = Vec::new();
 
     let mut i = 0;
-    while tree[i] != 0 {
-        i += 1
-    }
-    i += 1;
     while i < tree.len() {
         let mode_start = i;
         while tree[i] != b' ' {
@@ -125,7 +113,7 @@ fn wipe_dir(dir: &Path, ignore: Vec<String>) -> io::Result<()> {
     Ok(())
 }
 
-pub fn checkout(branch: String, dest: Option<&Path>) -> io::Result<()> {
+pub fn load(branch: String, dest: Option<&Path>) -> io::Result<()> {
     let head = Path::new(".denali/refs/heads").join(branch);
     let dest_dir = match dest {
         Some(d) if d.exists() && d.is_dir() => d,

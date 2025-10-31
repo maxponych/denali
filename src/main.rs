@@ -1,42 +1,52 @@
 mod commands;
-use commands::{add, checkout, init};
-use std::path::PathBuf;
+mod functions;
+mod objects;
+mod utils;
+use clap::Parser;
+use commands::{Cli, Commands, TmplCommand};
+use utils::*;
 
-use clap::{Parser, Subcommand};
-
-#[derive(Parser)]
-#[command(name = "denali", about = "Denali CLI tool")]
-struct Cli {
-    #[command(subcommand)]
-    command: Commands,
-}
-
-#[derive(Subcommand)]
-enum Commands {
-    Init {
-        path: Option<PathBuf>,
-    },
-    Add {
-        path: PathBuf,
-    },
-    Checkout {
-        branch: String,
-        dest: Option<PathBuf>,
-    },
-}
+use colored::*;
+use functions::init;
+use functions::load;
+use functions::save;
 
 fn main() {
-    let cli = Cli::parse();
-
-    match cli.command {
-        Commands::Init { path } => {
-            init(path.as_deref()).unwrap();
-        }
-        Commands::Add { path } => {
-            add(&path).unwrap();
-        }
-        Commands::Checkout { branch, dest } => {
-            checkout(branch, dest.as_deref()).unwrap();
-        }
+    if let Err(e) = run() {
+        eprintln!("{}", e.to_string().red().bold());
+        std::process::exit(1);
     }
+}
+
+fn run() -> Result<(), Errors> {
+    let cli = Cli::parse();
+    match cli.command {
+        Commands::Init {
+            name,
+            path,
+            description,
+        } => init(name, path.as_deref(), description.as_deref())?,
+        Commands::Save {
+            project,
+            name,
+            description,
+        } => save(project, name, description.as_deref())?,
+        Commands::Load {
+            project,
+            name,
+            path,
+            before,
+            after,
+            with_config,
+        } => load(project, name, path.as_deref(), before, after, with_config)?,
+        Commands::Copy { project, path } => None.unwrap(),
+        Commands::List { project } => None.unwrap(),
+        Commands::Tmpl { sub } => match sub {
+            TmplCommand::New { name, path } => None.unwrap(),
+            TmplCommand::Apply { name, path } => None.unwrap(),
+            TmplCommand::List => None.unwrap(),
+        },
+        Commands::Check { path } => None.unwrap(),
+    }
+    Ok(())
 }

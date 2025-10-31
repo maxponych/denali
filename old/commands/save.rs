@@ -41,16 +41,10 @@ fn save_object(content: Vec<u8>) -> io::Result<[u8; 20]> {
 
 fn hash_file(path: &Path) -> io::Result<[u8; 20]> {
     let mut file = File::open(path)?;
-    let mut contents = Vec::new();
-    file.read_to_end(&mut contents)?;
+    let mut content = Vec::new();
+    file.read_to_end(&mut content)?;
 
-    let header = format!("blob {}\0", contents.len());
-    let mut blob = Vec::with_capacity(header.len() + contents.len());
-
-    blob.extend_from_slice(header.as_bytes());
-    blob.extend_from_slice(&contents);
-
-    let hash = save_object(blob).unwrap();
+    let hash = save_object(content).unwrap();
     Ok(hash)
 }
 
@@ -65,20 +59,15 @@ fn build_tree(entries: Vec<TreeStruct>) -> io::Result<[u8; 20]> {
         content.extend_from_slice(&entry.hash);
     }
 
-    let header = format!("tree {}\0", content.len());
-    let mut blob = Vec::with_capacity(header.len() + content.len());
-    blob.extend_from_slice(header.as_bytes());
-    blob.extend_from_slice(&content);
-
-    let hash = save_object(blob).unwrap();
+    let hash = save_object(content).unwrap();
     Ok(hash)
 }
 
 fn create_objects(path: &Path, ignore: &[String]) -> io::Result<[u8; 20]> {
     let mut entries: Vec<TreeStruct> = Vec::new();
 
-    let mode_dir = "40000";
-    let mode_file = "100644";
+    let mode_dir = "10";
+    let mode_file = "20";
 
     if path.is_dir() {
         for entry in fs::read_dir(path)? {
@@ -127,7 +116,7 @@ fn create_objects(path: &Path, ignore: &[String]) -> io::Result<[u8; 20]> {
     Ok(hash)
 }
 
-pub fn add(path: &Path) -> io::Result<()> {
+pub fn save(path: &Path) -> io::Result<()> {
     let store = Path::new(".denali");
 
     if !store.exists() || !store.is_dir() {
