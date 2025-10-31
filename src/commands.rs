@@ -45,7 +45,7 @@ pub enum Commands {
         path: Option<PathBuf>,
     },
     List {
-        project: Option<String>,
+        project: String,
     },
     Check {
         #[arg(long, short)]

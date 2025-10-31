@@ -11,6 +11,8 @@ use functions::init;
 use functions::load;
 use functions::save;
 
+use crate::functions::list;
+
 fn main() {
     if let Err(e) = run() {
         eprintln!("{}", e.to_string().red().bold());
@@ -39,8 +41,8 @@ fn run() -> Result<(), Errors> {
             after,
             with_config,
         } => load(project, name, path.as_deref(), before, after, with_config)?,
+        Commands::List { project } => list(project)?,
         Commands::Copy { project, path } => None.unwrap(),
-        Commands::List { project } => None.unwrap(),
         Commands::Tmpl { sub } => match sub {
             TmplCommand::New { name, path } => None.unwrap(),
             TmplCommand::Apply { name, path } => None.unwrap(),
