@@ -3,8 +3,8 @@ use std::{collections::HashMap, env, fs, path::PathBuf};
 use crate::utils::{Errors, MainManifest};
 
 pub fn denali_root() -> PathBuf {
-    //dirs::home_dir().unwrap().join(".denali")
-    env::current_dir().unwrap().join(".denali")
+    dirs::home_dir().unwrap().join(".denali")
+    //env::current_dir().unwrap().join(".denali")
 }
 
 pub fn make_root_dir(path: PathBuf) -> Result<(), Errors> {

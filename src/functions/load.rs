@@ -631,9 +631,9 @@ fn restore_cell(
             if !target.exists() {
                 fs::create_dir(&target)?;
             }
-            restore(hex::encode(entry.hash), &target, false)?;
+            restore(hex::encode(entry.hash), &target, true)?;
         } else {
-            restore_file(hex::encode(entry.hash), &target, false)?;
+            restore_file(hex::encode(entry.hash), &target, true)?;
         }
     }
 

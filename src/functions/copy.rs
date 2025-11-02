@@ -37,8 +37,8 @@ pub fn copy(project: String, path: Option<&Path>) -> Result<(), Errors> {
         return Err(Errors::NotADir(dir));
     }
 
-    let root = denali_root();
-    let manifest_path = root.join("manifest.json");
+    let main_root = denali_root();
+    let manifest_path = main_root.join("manifest.json");
     let manifest_data = fs::read(&manifest_path)?;
     let mut manifest: MainManifest = serde_json::from_slice(&manifest_data)?;
 
@@ -211,11 +211,11 @@ fn copy_tree(hash: String, path: &Path, copied: &mut HashSet<String>) -> Result<
         if copied.contains(&hex::encode(entry.hash)) || entry.mode == "30" {
             continue;
         }
+        copied.insert(hex::encode(entry.hash));
         if entry.mode == "10" {
             copy_tree(hex::encode(entry.hash), path, copied)?;
         } else {
             copy_object(hex::encode(entry.hash), path)?;
-            copied.insert(hex::encode(entry.hash));
         }
     }
 
