@@ -1,12 +1,40 @@
 use colored::*;
-use std::collections::HashMap;
-use std::fs;
+use std::path::PathBuf;
+use std::sync::OnceLock;
+use std::{collections::HashMap, path::Path};
+use std::{env, fs};
 
 use crate::utils::{
     CellRef, Errors, MainManifest, ProjectManifest, ProjectRef, Snapshots, denali_root,
 };
 
-pub fn list(name: String) -> Result<(), Errors> {
+static GLOBAL_ROOT: OnceLock<PathBuf> = OnceLock::new();
+
+pub fn init_root(from: Option<&Path>) -> Result<(), Errors> {
+    let path = if let Some(p) = from {
+        make_absolute(p)?
+    } else {
+        denali_root()
+    };
+
+    GLOBAL_ROOT.set(path).map_err(|_| Errors::InternalError)?;
+    Ok(())
+}
+
+pub fn global_root() -> Result<&'static PathBuf, Errors> {
+    GLOBAL_ROOT.get().ok_or(Errors::InternalError)
+}
+
+pub fn make_absolute(path: &Path) -> Result<PathBuf, Errors> {
+    if path.is_absolute() {
+        Ok(path.to_path_buf())
+    } else {
+        Ok(env::current_dir()?.join(path).canonicalize()?)
+    }
+}
+
+pub fn list(name: String, from: Option<&Path>) -> Result<(), Errors> {
+    init_root(from)?;
     let (cell, project_name) = parse_name(&name)?;
     let manifest = load_main_manifest()?;
     if project_name == "all" && cell.is_none() {
@@ -139,13 +167,13 @@ fn parse_name(name: &str) -> Result<(Option<String>, String), Errors> {
 }
 
 fn load_main_manifest() -> Result<MainManifest, Errors> {
-    let path = denali_root().join("manifest.json");
+    let path = global_root()?.join("manifest.json");
     let data = fs::read(path)?;
     Ok(serde_json::from_slice(&data)?)
 }
 
 fn load_project_manifest(proj_ref: &ProjectRef) -> Result<ProjectManifest, Errors> {
-    let path = denali_root()
+    let path = global_root()?
         .join("snapshots")
         .join("projects")
         .join(format!("{}.json", proj_ref.manifest));
@@ -181,4 +209,3 @@ fn print_all_projects(manifest: &MainManifest) -> Result<(), Errors> {
     }
     Ok(())
 }
-

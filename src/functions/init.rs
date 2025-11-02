@@ -81,7 +81,7 @@ pub fn init(name: String, path: Option<&Path>, description: Option<&str>) -> Res
 
     let root = denali_root();
     if !root.exists() {
-        make_root_dir()?;
+        make_root_dir(root.clone())?;
     } else if !root.is_dir() {
         return Err(Errors::NotADir(root));
     }

@@ -2,6 +2,7 @@ mod commands;
 mod functions;
 mod objects;
 mod utils;
+
 use clap::Parser;
 use commands::{Cli, Commands, TmplCommand};
 use utils::*;
@@ -11,6 +12,7 @@ use functions::init;
 use functions::load;
 use functions::save;
 
+use crate::functions::copy;
 use crate::functions::list;
 
 fn main() {
@@ -40,9 +42,18 @@ fn run() -> Result<(), Errors> {
             before,
             after,
             with_config,
-        } => load(project, name, path.as_deref(), before, after, with_config)?,
-        Commands::List { project } => list(project)?,
-        Commands::Copy { project, path } => None.unwrap(),
+            from,
+        } => load(
+            project,
+            name,
+            path.as_deref(),
+            before,
+            after,
+            with_config,
+            from.as_deref(),
+        )?,
+        Commands::List { project, from } => list(project, from.as_deref())?,
+        Commands::Copy { project, path } => copy(project, path.as_deref())?,
         Commands::Tmpl { sub } => match sub {
             TmplCommand::New { name, path } => None.unwrap(),
             TmplCommand::Apply { name, path } => None.unwrap(),

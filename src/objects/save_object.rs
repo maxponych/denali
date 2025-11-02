@@ -36,8 +36,8 @@ pub fn save_snapshot(content: Vec<u8>) -> Result<[u8; 32], Errors> {
 
     let hash = blake3::hash(&compressed);
     let name = hash.to_hex().to_string();
-    let dir = &name[..2];
-    let filename = &name[2..];
+    let dir = &name[..3];
+    let filename = &name[3..];
 
     let obj_path = denali_root().join("snapshots").join("meta").join(dir);
     fs::create_dir_all(&obj_path)?;

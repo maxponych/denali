@@ -32,6 +32,8 @@ pub enum Commands {
         before: Option<String>,
         #[arg(long, short)]
         after: Option<String>,
+        #[arg(long, short)]
+        from: Option<PathBuf>,
         #[arg(long = "with_config", short = 'c')]
         with_config: bool,
     },
@@ -46,6 +48,8 @@ pub enum Commands {
     },
     List {
         project: String,
+        #[arg(long, short)]
+        from: Option<PathBuf>,
     },
     Check {
         #[arg(long, short)]

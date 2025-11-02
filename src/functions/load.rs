@@ -3,6 +3,7 @@ use std::{
     env, fs,
     io::Read,
     path::{Path, PathBuf},
+    sync::OnceLock,
     time::SystemTime,
 };
 
@@ -137,6 +138,31 @@ fn build_filter(
     Ok(Filter::new(before, after, cli_name))
 }
 
+static GLOBAL_ROOT: OnceLock<PathBuf> = OnceLock::new();
+
+pub fn init_root(from: Option<&Path>) -> Result<(), Errors> {
+    let path = if let Some(p) = from {
+        make_absolute(p)?
+    } else {
+        denali_root()
+    };
+
+    GLOBAL_ROOT.set(path).map_err(|_| Errors::InternalError)?;
+    Ok(())
+}
+
+pub fn global_root() -> Result<&'static PathBuf, Errors> {
+    GLOBAL_ROOT.get().ok_or(Errors::InternalError)
+}
+
+pub fn make_absolute(path: &Path) -> Result<PathBuf, Errors> {
+    if path.is_absolute() {
+        Ok(path.to_path_buf())
+    } else {
+        Ok(env::current_dir()?.join(path).canonicalize()?)
+    }
+}
+
 pub fn load(
     project: String,
     name: Option<String>,
@@ -144,6 +170,7 @@ pub fn load(
     before: Option<String>,
     after: Option<String>,
     with_config: bool,
+    from: Option<&Path>,
 ) -> Result<(), Errors> {
     let mut parts = project.split('@');
     let cell = parts.next().map(|s| s.to_string());
@@ -155,7 +182,9 @@ pub fn load(
         _ => return Err(Errors::InvalidNameFormat(project)),
     };
 
-    let root = denali_root();
+    init_root(from)?;
+
+    let root = global_root()?;
     let manifest_path = root.join("manifest.json");
     let manifest_data = fs::read(&manifest_path)?;
     let manifest: MainManifest = serde_json::from_slice(&manifest_data)?;
@@ -171,7 +200,7 @@ pub fn load(
         }
     }
 
-    let project_manifest_path = denali_root()
+    let project_manifest_path = global_root()?
         .join("snapshots")
         .join("projects")
         .join(format!("{}.json", proj.manifest.clone()));
@@ -198,9 +227,9 @@ pub fn load(
         };
     }
 
-    let mut bool_root_path = true;
+    let mut is_root_path = true;
     if let Some(_) = path {
-        bool_root_path = false;
+        is_root_path = false;
     }
 
     if cell == None {
@@ -212,7 +241,7 @@ pub fn load(
         };
 
         let (toml_bef, toml_aft) = {
-            if bool_root_path {
+            if is_root_path {
                 let bef = config.root.snapshot_before.trim();
                 let aft = config.root.snapshot_after.trim();
 
@@ -245,7 +274,7 @@ pub fn load(
 
         let mut locks: HashMap<String, Filter> = HashMap::new();
 
-        if bool_root_path {
+        if is_root_path {
             for cell in &proj.cells {
                 let Some(cell_cfg) = config.cells.get(cell) else {
                     continue;
@@ -276,6 +305,15 @@ pub fn load(
         return Ok(());
     }
 
+    if !manifest
+        .projects
+        .get(&project_name)
+        .ok_or(Errors::InternalError)?
+        .cells
+        .contains(&cell.clone().ok_or(Errors::InternalError)?)
+    {
+        return Err(Errors::ProjectNotFound(cell.ok_or(Errors::InternalError)?));
+    }
     let (before_cmp, after_cmp) = match (before, after) {
         (Some(bef), Some(aft)) => (Some(parse_datetime(&bef)?), Some(parse_datetime(&aft)?)),
         (Some(bef), None) => (Some(parse_datetime(&bef)?), None),
@@ -283,7 +321,7 @@ pub fn load(
         _ => (None, None),
     };
 
-    let (toml_bef, toml_aft) = if bool_root_path {
+    let (toml_bef, toml_aft) = if is_root_path {
         if let Some(cell_name_in) = cell.clone() {
             if let Some(cell_cfg) = config.cells.get(&cell_name_in) {
                 let bef = cell_cfg.snapshot_before.trim();
@@ -320,7 +358,7 @@ pub fn load(
         name,
         toml_bef,
         toml_aft,
-        if bool_root_path {
+        if is_root_path {
             Some(
                 config
                     .cells
@@ -374,9 +412,9 @@ fn load_cell(
         return Err(Errors::NoMatches);
     }
 
-    let meta_dir = &snap_meta[..2];
-    let meta_file = &snap_meta[2..];
-    let meta_path = denali_root()
+    let meta_dir = &snap_meta[..3];
+    let meta_file = &snap_meta[3..];
+    let meta_path = global_root()?
         .join("snapshots")
         .join("meta")
         .join(meta_dir)
@@ -426,9 +464,9 @@ fn load_project(
         return Err(Errors::NoMatches);
     }
 
-    let meta_dir = &snap_meta[..2];
-    let meta_file = &snap_meta[2..];
-    let meta_path = denali_root()
+    let meta_dir = &snap_meta[..3];
+    let meta_file = &snap_meta[3..];
+    let meta_path = global_root()?
         .join("snapshots")
         .join("meta")
         .join(meta_dir)
@@ -482,7 +520,7 @@ fn restore_file(hash: String, dest: &Path, with_config: bool) -> Result<(), Erro
     let dir = &hash[..3];
     let filename = &hash[3..];
 
-    let path = denali_root().join("objects").join(dir).join(filename);
+    let path = global_root()?.join("objects").join(dir).join(filename);
     let mut file = fs::File::open(path)?;
     let mut blob_comp = Vec::new();
     file.read_to_end(&mut blob_comp)?;
@@ -556,7 +594,7 @@ fn restore_cell(
     let dir = &hash[..3];
     let filename = &hash[3..];
 
-    let path = denali_root().join("objects").join(dir).join(filename);
+    let path = global_root()?.join("objects").join(dir).join(filename);
     let mut file = fs::File::open(path)?;
     let mut tree_cmp = Vec::new();
     file.read_to_end(&mut tree_cmp)?;
@@ -606,7 +644,7 @@ fn restore(hash: String, dest: &Path, with_config: bool) -> Result<(), Errors> {
     let dir = &hash[..3];
     let filename = &hash[3..];
 
-    let path = denali_root().join("objects").join(dir).join(filename);
+    let path = global_root()?.join("objects").join(dir).join(filename);
     let mut file = fs::File::open(path)?;
     let mut tree_cmp = Vec::new();
     file.read_to_end(&mut tree_cmp)?;

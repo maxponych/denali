@@ -1,16 +1,17 @@
-use std::{collections::HashMap, fs, path::PathBuf};
+use std::{collections::HashMap, env, fs, path::PathBuf};
 
 use crate::utils::{Errors, MainManifest};
 
 pub fn denali_root() -> PathBuf {
-    dirs::home_dir().unwrap().join(".denali")
+    //dirs::home_dir().unwrap().join(".denali")
+    env::current_dir().unwrap().join(".denali")
 }
 
-pub fn make_root_dir() -> Result<(), Errors> {
-    fs::create_dir_all(denali_root().join("objects"))?;
-    fs::create_dir_all(denali_root().join("snapshots").join("meta"))?;
-    fs::create_dir_all(denali_root().join("snapshots").join("projects"))?;
-    let manifest_file = denali_root().join("manifest.json");
+pub fn make_root_dir(path: PathBuf) -> Result<(), Errors> {
+    fs::create_dir_all(path.join("objects"))?;
+    fs::create_dir_all(path.join("snapshots").join("meta"))?;
+    fs::create_dir_all(path.join("snapshots").join("projects"))?;
+    let manifest_file = path.join("manifest.json");
     let manifest_obj: MainManifest = MainManifest {
         projects: HashMap::new(),
         templates: HashMap::new(),
