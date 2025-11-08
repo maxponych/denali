@@ -37,6 +37,17 @@ pub enum Commands {
         #[arg(long = "with_config", short = 'c')]
         with_config: bool,
     },
+    Check {
+        #[arg(long, short)]
+        path: Option<PathBuf>,
+    },
+    Remove {
+        project: String,
+    },
+    Clean {
+        #[arg(long, short)]
+        dry: bool,
+    },
     Tmpl {
         #[command(subcommand)]
         sub: TmplCommand,
@@ -50,10 +61,6 @@ pub enum Commands {
         project: String,
         #[arg(long, short)]
         from: Option<PathBuf>,
-    },
-    Check {
-        #[arg(long, short)]
-        path: Option<PathBuf>,
     },
 }
 

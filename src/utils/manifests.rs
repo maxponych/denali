@@ -14,7 +14,7 @@ pub struct MainManifest {
     pub templates: HashMap<String, String>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ProjectRef {
     pub path: String,
     pub manifest: String,
@@ -47,7 +47,7 @@ pub struct ProjectManifest {
     pub cells: HashMap<String, CellRef>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, Hash)]
 pub struct Snapshot {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub description: String,

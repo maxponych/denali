@@ -41,7 +41,7 @@ pub fn save_snapshot(content: Vec<u8>) -> Result<[u8; 32], Errors> {
 
     let obj_path = denali_root().join("snapshots").join("meta").join(dir);
     fs::create_dir_all(&obj_path)?;
-    let file_path = obj_path.join(format!("{}.json.zstd", filename));
+    let file_path = obj_path.join(filename);
 
     fs::write(&file_path, &compressed)?;
 

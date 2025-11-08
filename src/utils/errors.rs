@@ -23,6 +23,8 @@ pub enum Errors {
     TomlDe(toml::de::Error),
     GlobError(globset::Error),
     NoMatches,
+    Dialoguer(dialoguer::Error),
+    Stoped,
 }
 
 impl fmt::Display for Errors {
@@ -98,7 +100,19 @@ impl fmt::Display for Errors {
             Errors::NoMatches => {
                 write!(f, "No matches were found")
             }
+            Errors::Dialoguer(err) => {
+                write!(f, "Dialog error happend \n{}", err)
+            }
+            Errors::Stoped => {
+                write!(f, "The program was stoped")
+            }
         }
+    }
+}
+
+impl From<dialoguer::Error> for Errors {
+    fn from(err: dialoguer::Error) -> Self {
+        Errors::Dialoguer(err)
     }
 }
 

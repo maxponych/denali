@@ -2,7 +2,6 @@ use std::{
     collections::{HashMap, HashSet},
     env, fs,
     io::Read,
-    ops::Deref,
     path::Path,
 };
 
@@ -249,7 +248,7 @@ fn copy_snapshot(hash: String, path: &Path) -> Result<String, Errors> {
         .join("snapshots")
         .join("meta")
         .join(dir)
-        .join(format!("{}.json.zstd", filename));
+        .join(filename);
 
     let mut file = fs::File::open(root)?;
     let mut blob_comp = Vec::new();

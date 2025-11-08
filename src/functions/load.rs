@@ -418,7 +418,7 @@ fn load_cell(
         .join("snapshots")
         .join("meta")
         .join(meta_dir)
-        .join(format!("{}.json.zstd", meta_file));
+        .join(meta_file);
     let meta_data_cmp = fs::read(meta_path)?;
     let mut meta_data = Vec::new();
     {
@@ -470,7 +470,7 @@ fn load_project(
         .join("snapshots")
         .join("meta")
         .join(meta_dir)
-        .join(format!("{}.json.zstd", meta_file));
+        .join(meta_file);
 
     let meta_data_cmp = fs::read(meta_path)?;
     let mut meta_data = Vec::new();
@@ -521,6 +521,9 @@ fn restore_file(hash: String, dest: &Path, with_config: bool) -> Result<(), Erro
     let filename = &hash[3..];
 
     let path = global_root()?.join("objects").join(dir).join(filename);
+    if !path.exists() {
+        return Ok(());
+    }
     let mut file = fs::File::open(path)?;
     let mut blob_comp = Vec::new();
     file.read_to_end(&mut blob_comp)?;
@@ -595,6 +598,9 @@ fn restore_cell(
     let filename = &hash[3..];
 
     let path = global_root()?.join("objects").join(dir).join(filename);
+    if !path.exists() {
+        return Ok(());
+    }
     let mut file = fs::File::open(path)?;
     let mut tree_cmp = Vec::new();
     file.read_to_end(&mut tree_cmp)?;
@@ -645,6 +651,9 @@ fn restore(hash: String, dest: &Path, with_config: bool) -> Result<(), Errors> {
     let filename = &hash[3..];
 
     let path = global_root()?.join("objects").join(dir).join(filename);
+    if !path.exists() {
+        return Ok(());
+    }
     let mut file = fs::File::open(path)?;
     let mut tree_cmp = Vec::new();
     file.read_to_end(&mut tree_cmp)?;
