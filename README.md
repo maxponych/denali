@@ -60,6 +60,15 @@ Export project/cell to specified directory (use `all` to copy everything).
 ### `denali list <name>`
 List projects, cells, or snapshots (use `all` to list everything).
 
+### `denali remove <name>`
+Remove project/cell from manifests. *Deleting a cell will remove it from all snapshots; older snapshots won’t be able to restore it (this behavior will change in the future).*
+
+### `denali clean [--dry]`
+Clean detached objects. `--dry` is going to return hashes of snapshots metadata that is going to be removed.
+
+### `denali check [-p <path>]`
+Compare config file with manifests. `-p` must point to the directory containing the `denali.toml` file.
+
 ## Config file -  `.denali.toml`
 The config file will be generated on project initialisation inside the project root. In this file you can specify ignore, filters, locks, name, description, path. Config will not affect load if load is called with `--path` argument.
 
@@ -88,7 +97,16 @@ path = "/home/user/projects/os/drivers"
 ignore = ["*.bin", "*.elf", "*.o", "src/*.o"]
 snapshot_after = "20-05-2025 13:11"
 ```
-At the moment only ignore, snapshot_before/after, lock affect the load. Changing the name, description or path in config does not affect the commands *yet*. `check` command, when done, is going to scan the config and change the values in manifests respectively.
+In order to rename cell, just change the table name. `check` command will then compare the path to detect name change.
+
+### `name = <name>`
+Project name. *Note that value is available only in `root` table*.
+
+### `description = "<description>"`
+Your project/cell description
+
+### `path = "<path>"`
+Path to your cell. *Note that it must be absolute*
 
 ### `lock = "<name>"`
 Locks this particular cell at the specified snapshot. Denali will ignore any values passed into `load` command for that cell if lock is set. 
@@ -108,7 +126,7 @@ Filter for snapshots. `load` will load newest within specified constrains.
 
 ## Roadmap
 
-- [ ] `check` command (manifest synchronisation with config file)
+- [x] `check` command (manifest synchronisation with config file)
 - [ ] Templates
 - [ ] Remote sync (push/pull)
 - [ ] Diff command
