@@ -232,7 +232,9 @@ fn copy_object(hash: String, path: &Path) -> Result<(), Errors> {
     file.read_to_end(&mut blob_comp)?;
 
     let directory = path.join("objects").join(dir);
-    fs::create_dir(&directory)?;
+    if !directory.exists() {
+        fs::create_dir(&directory)?;
+    }
     let filepath = directory.join(filename);
 
     fs::write(filepath, blob_comp)?;
@@ -263,7 +265,7 @@ fn copy_snapshot(hash: String, path: &Path) -> Result<String, Errors> {
     let snapshot: Snapshot = serde_json::from_slice(&content)?;
     let destination = path.join("snapshots").join("meta").join(dir);
     fs::create_dir(&destination)?;
-    let file = destination.join(format!("{}.json.zstd", filename));
+    let file = destination.join(filename);
     fs::write(file, blob_comp)?;
     Ok(snapshot.root)
 }
@@ -307,7 +309,6 @@ fn write_main_manifest(manifest: &MainManifest, path: &Path) -> Result<(), Error
 
 struct TreeStruct {
     mode: String,
-    name: String,
     hash: [u8; 32],
 }
 
@@ -323,11 +324,9 @@ fn parse_tree(tree: &Vec<u8>) -> Result<Vec<TreeStruct>, Errors> {
         let mode = String::from_utf8_lossy(&tree[mode_start..i]).to_string();
         i += 1;
 
-        let name_start = i;
         while tree[i] != 0 {
             i += 1;
         }
-        let name = String::from_utf8_lossy(&tree[name_start..i]).to_string();
         i += 1;
 
         let hash: [u8; 32] = tree[i..i + 32].try_into()?;
@@ -335,7 +334,6 @@ fn parse_tree(tree: &Vec<u8>) -> Result<Vec<TreeStruct>, Errors> {
 
         entries.push(TreeStruct {
             mode: mode,
-            name: name,
             hash: hash,
         });
     }

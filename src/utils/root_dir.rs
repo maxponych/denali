@@ -12,11 +12,13 @@ pub fn make_root_dir(path: PathBuf) -> Result<(), Errors> {
     fs::create_dir_all(path.join("snapshots").join("meta"))?;
     fs::create_dir_all(path.join("snapshots").join("projects"))?;
     let manifest_file = path.join("manifest.json");
-    let manifest_obj: MainManifest = MainManifest {
-        projects: HashMap::new(),
-        templates: HashMap::new(),
+    if !manifest_file.exists() {
+        let manifest_obj: MainManifest = MainManifest {
+            projects: HashMap::new(),
+            templates: HashMap::new(),
+        };
+        let manifest_data = serde_json::to_vec_pretty(&manifest_obj)?;
+        fs::write(manifest_file, manifest_data)?;
     };
-    let manifest_data = serde_json::to_vec_pretty(&manifest_obj)?;
-    fs::write(manifest_file, manifest_data)?;
     Ok(())
 }

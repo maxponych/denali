@@ -115,10 +115,10 @@ fn build_filter(
     toml_after: Option<DateTime<Utc>>,
     toml_lock: Option<String>,
 ) -> Result<Filter, Errors> {
-    if let Some(lock) = toml_lock
-        && !lock.is_empty()
-    {
-        return Ok(Filter::new(None, None, Some(lock)));
+    if let Some(lock) = toml_lock {
+        if !lock.is_empty() {
+            return Ok(Filter::new(None, None, Some(lock)));
+        }
     }
 
     let before = match (cli_before, toml_before) {

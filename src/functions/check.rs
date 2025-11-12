@@ -53,21 +53,6 @@ pub fn check(path: Option<&Path>) -> Result<(), Errors> {
     Ok(())
 }
 
-fn check_cells_delete(
-    project: &ProjectManifest,
-    config: &DenaliToml,
-    proj_name: &str,
-) -> Result<(), Errors> {
-    for (name, _) in &project.cells {
-        if let Some(_) = config.cells.get(name) {
-            continue;
-        } else {
-            maybe_delete(name, proj_name.to_string(), project)?;
-        }
-    }
-    Ok(())
-}
-
 fn maybe_delete(
     name: &str,
     project_name: String,
@@ -185,14 +170,11 @@ fn check_updates(
     }
 
     for (cell, cell_ref) in &config.cells {
-        check_cell(
-            &cell,
-            cell_ref,
-            config,
-            &config.root.name,
-            &project.manifest,
-        )?;
+        check_cell(&cell, cell_ref, &config.root.name, &project.manifest)?;
     }
+
+    let new_manifest = load_project_manifest(project.manifest.clone())?;
+    check_cells_delete(&new_manifest, config, &config.root.name)?;
 
     Ok(())
 }
@@ -200,15 +182,14 @@ fn check_updates(
 fn check_cell(
     name: &str,
     cell_conf: &CellConfig,
-    config: &DenaliToml,
     proj_name: &str,
     uuid: &str,
 ) -> Result<(), Errors> {
     let manifest = load_project_manifest(uuid.to_string())?;
     if !manifest.cells.contains_key(name) {
         let mut try_key: Option<String> = None;
-        for (name, proj_ref) in &manifest.cells {
-            if proj_ref.path == cell_conf.path {
+        for (name, cell_ref) in &manifest.cells {
+            if cell_ref.path == cell_conf.path {
                 try_key = Some(name.to_string());
                 break;
             }
@@ -223,7 +204,7 @@ fn check_cell(
     }
 
     let new_manifest = load_project_manifest(uuid.to_string())?;
-    check_cells_delete(&new_manifest, config, proj_name)?;
+
     let cell_ref = new_manifest.cells.get(name).ok_or(Errors::InternalError)?;
 
     if cell_ref.description != cell_conf.description {
@@ -262,6 +243,21 @@ fn check_cell(
         }
     }
 
+    Ok(())
+}
+
+fn check_cells_delete(
+    project: &ProjectManifest,
+    config: &DenaliToml,
+    proj_name: &str,
+) -> Result<(), Errors> {
+    for (name, _) in &project.cells {
+        if let Some(_) = config.cells.get(name) {
+            continue;
+        } else {
+            maybe_delete(name, proj_name.to_string(), project)?;
+        }
+    }
     Ok(())
 }
 
