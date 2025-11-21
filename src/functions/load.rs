@@ -156,9 +156,7 @@ pub fn load(
         _ => return Err(Errors::InvalidNameFormat(project)),
     };
 
-    let manifest_path = ctx.main_manifest_path();
-    let manifest_data = fs::read(&manifest_path)?;
-    let manifest: MainManifest = serde_json::from_slice(&manifest_data)?;
+    let manifest: MainManifest = ctx.load_main_manifest()?;
 
     let proj = manifest
         .projects
@@ -171,9 +169,7 @@ pub fn load(
         }
     }
 
-    let project_manifest_path = ctx.project_manifest_path(proj.manifest.clone());
-    let project_manifest_data = fs::read(project_manifest_path)?;
-    let project_manifest: ProjectManifest = serde_json::from_slice(&project_manifest_data)?;
+    let project_manifest: ProjectManifest = ctx.load_project_manifest(proj.manifest.clone())?;
 
     let config_path = Path::new(&project_manifest.source).join(".denali.toml");
 
@@ -485,22 +481,7 @@ fn restore_file(
     dest: &Path,
     with_config: bool,
 ) -> Result<(), Errors> {
-    let dir = &hash[..3];
-    let filename = &hash[3..];
-
-    let path = ctx.objects_path().join(dir).join(filename);
-    if !path.exists() {
-        return Ok(());
-    }
-    let mut file = fs::File::open(path)?;
-    let mut blob_comp = Vec::new();
-    file.read_to_end(&mut blob_comp)?;
-
-    let mut content = Vec::new();
-    {
-        let mut decoder = Decoder::new(&blob_comp[..])?;
-        decoder.read_to_end(&mut content)?;
-    }
+    let content = ctx.load_object(hash)?;
 
     let file_name = dest
         .file_name()

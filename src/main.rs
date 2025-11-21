@@ -1,6 +1,5 @@
 mod commands;
 mod functions;
-mod objects;
 mod utils;
 
 use clap::Parser;

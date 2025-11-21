@@ -1,6 +1,6 @@
 use std::{fs, path::Path};
 
-use crate::utils::{DenaliToml, Errors, MainManifest, ProjectManifest, context::AppContext};
+use crate::utils::{DenaliToml, Errors, context::AppContext};
 
 pub fn remove(ctx: &AppContext, project: String) -> Result<(), Errors> {
     let mut parts = project.split('@');
@@ -13,7 +13,7 @@ pub fn remove(ctx: &AppContext, project: String) -> Result<(), Errors> {
         _ => return Err(Errors::InvalidNameFormat(project)),
     };
 
-    let manifest = load_manifest(&ctx.main_manifest_path())?;
+    let manifest = ctx.load_main_manifest()?;
 
     if manifest.projects.get(&project_name).is_some() && cell.is_none() {
         delete_project(ctx, project_name)?;
@@ -57,13 +57,13 @@ fn delete_cell(
     path: &Path,
 ) -> Result<(), Errors> {
     let mut config = load_config(path)?;
-    let mut manifest = load_manifest(&ctx.main_manifest_path())?;
+    let mut manifest = ctx.load_main_manifest()?;
     let proj_ref = manifest
         .projects
         .get_mut(&project_name)
         .ok_or(Errors::InternalError)?;
     let uuid = proj_ref.manifest.clone();
-    let mut project_manifest = load_project_manifest(&ctx.project_manifest_path(uuid.clone()))?;
+    let mut project_manifest = ctx.load_project_manifest(uuid.clone())?;
     proj_ref.cells.retain(|n| n != &cell);
     let project_path = ctx.project_manifest_path(uuid);
     project_manifest.cells.remove(&cell);
@@ -77,7 +77,7 @@ fn delete_cell(
 }
 
 fn delete_project(ctx: &AppContext, project_name: String) -> Result<(), Errors> {
-    let mut manifest = load_manifest(&ctx.main_manifest_path())?;
+    let mut manifest = ctx.load_main_manifest()?;
     let proj_ref = manifest
         .projects
         .get_mut(&project_name)
@@ -92,15 +92,4 @@ fn delete_project(ctx: &AppContext, project_name: String) -> Result<(), Errors> 
     let manifest_data = serde_json::to_vec_pretty(&manifest)?;
     fs::write(ctx.main_manifest_path(), &manifest_data)?;
     Ok(())
-}
-
-fn load_project_manifest(path: &Path) -> Result<ProjectManifest, Errors> {
-    let data = fs::read(path)?;
-    let manifest = serde_json::from_slice(&data)?;
-    Ok(manifest)
-}
-fn load_manifest(path: &Path) -> Result<MainManifest, Errors> {
-    let manifest_data = fs::read(path)?;
-    let manifest = serde_json::from_slice(&manifest_data)?;
-    Ok(manifest)
 }

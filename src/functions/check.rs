@@ -22,7 +22,7 @@ pub fn check(ctx: &AppContext, path: Option<&Path>) -> Result<(), Errors> {
     ctx.make_root_dir()?;
 
     let config = read_config(&root)?;
-    let manifest = load_manifest(&ctx.main_manifest_path())?;
+    let manifest = ctx.load_main_manifest()?;
     if !manifest.projects.contains_key(&config.root.name) {
         let mut try_key: Option<String> = None;
         for (name, proj_ref) in &manifest.projects {
@@ -33,14 +33,14 @@ pub fn check(ctx: &AppContext, path: Option<&Path>) -> Result<(), Errors> {
         }
 
         if let Some(key) = try_key {
-            update_proj_name_in_main(&ctx.main_manifest_path(), &key, &config.root.name)?;
+            update_proj_name_in_main(&ctx, &key, &config.root.name)?;
         } else {
             create_proj(ctx, root, &config)?;
             return Ok(());
         }
     }
 
-    let mut new_manifest = load_manifest(&ctx.main_manifest_path())?;
+    let mut new_manifest = ctx.load_main_manifest()?;
 
     let mut project = new_manifest
         .projects
@@ -105,13 +105,13 @@ fn update_project_config(path: &Path, name: String, cell: CellConfig) -> Result<
 }
 
 fn delete_cell(ctx: &AppContext, cell: String, project_name: String) -> Result<(), Errors> {
-    let mut manifest = load_manifest(&ctx.main_manifest_path())?;
+    let mut manifest = ctx.load_main_manifest()?;
     let proj_ref = manifest
         .projects
         .get_mut(&project_name)
         .ok_or(Errors::InternalError)?;
     let uuid = proj_ref.manifest.clone();
-    let mut project_manifest = load_project_manifest(&ctx.project_manifest_path(uuid.clone()))?;
+    let mut project_manifest = ctx.load_project_manifest(uuid.clone())?;
     proj_ref.cells.retain(|n| n != &cell);
     let path = ctx.project_manifest_path(uuid);
     project_manifest.cells.remove(&cell);
@@ -129,7 +129,7 @@ fn check_updates(
     path: &Path,
     project_name: &str,
 ) -> Result<(), Errors> {
-    let project_conf = load_project_manifest(&ctx.project_manifest_path(project.manifest.clone()))?;
+    let project_conf = ctx.load_project_manifest(project.manifest.clone())?;
     if project.path != path.to_string_lossy().to_string() {
         let confirmed = Confirm::new()
             .with_prompt(format!(
@@ -181,7 +181,7 @@ fn check_updates(
         check_cell(ctx, &cell, cell_ref, &config.root.name, &project.manifest)?;
     }
 
-    let new_manifest = load_project_manifest(&ctx.project_manifest_path(project.manifest.clone()))?;
+    let new_manifest = ctx.load_project_manifest(project.manifest.clone())?;
     check_cells_delete(ctx, &new_manifest, config, &config.root.name)?;
 
     Ok(())
@@ -194,7 +194,7 @@ fn check_cell(
     proj_name: &str,
     uuid: &str,
 ) -> Result<(), Errors> {
-    let manifest = load_project_manifest(&ctx.project_manifest_path(uuid.to_string()))?;
+    let manifest = ctx.load_project_manifest(uuid.to_string())?;
     if !manifest.cells.contains_key(name) {
         let mut try_key: Option<String> = None;
         for (name, cell_ref) in &manifest.cells {
@@ -212,7 +212,7 @@ fn check_cell(
         }
     }
 
-    let new_manifest = load_project_manifest(&ctx.project_manifest_path(uuid.to_string()))?;
+    let new_manifest = ctx.load_project_manifest(uuid.to_string())?;
 
     let cell_ref = new_manifest.cells.get(name).ok_or(Errors::InternalError)?;
 
@@ -277,16 +277,16 @@ fn change_cell_path(
     cell_name: &str,
     path: String,
 ) -> Result<(), Errors> {
-    let manifest = load_manifest(&ctx.main_manifest_path())?;
+    let manifest = ctx.load_main_manifest()?;
     let project_ref = manifest.projects.get(name).ok_or(Errors::InternalError)?;
     let uuid = project_ref.manifest.clone();
-    let mut project_manifest = load_project_manifest(&ctx.project_manifest_path(uuid.clone()))?;
+    let mut project_manifest = ctx.load_project_manifest(uuid.clone())?;
     project_manifest
         .cells
         .get_mut(cell_name)
         .ok_or(Errors::InternalError)?
         .path = path;
-    save_project_manifest(&ctx.project_manifest_path(uuid), &project_manifest)?;
+    ctx.write_project_manifest(uuid, &project_manifest)?;
     Ok(())
 }
 
@@ -296,16 +296,16 @@ fn change_cell_description(
     cell_name: &str,
     description: String,
 ) -> Result<(), Errors> {
-    let manifest = load_manifest(&ctx.main_manifest_path())?;
+    let manifest = ctx.load_main_manifest()?;
     let project_ref = manifest.projects.get(name).ok_or(Errors::InternalError)?;
     let uuid = project_ref.manifest.clone();
-    let mut project_manifest = load_project_manifest(&ctx.project_manifest_path(uuid.clone()))?;
+    let mut project_manifest = ctx.load_project_manifest(uuid.clone())?;
     project_manifest
         .cells
         .get_mut(cell_name)
         .ok_or(Errors::InternalError)?
         .description = description;
-    save_project_manifest(&ctx.project_manifest_path(uuid), &project_manifest)?;
+    ctx.write_project_manifest(uuid, &project_manifest)?;
     Ok(())
 }
 
@@ -326,7 +326,7 @@ fn update_cell_name(
         .interact()?;
 
     if confirmed {
-        let mut manifest = load_manifest(&ctx.main_manifest_path())?;
+        let mut manifest = ctx.load_main_manifest()?;
         let project_ref = manifest
             .projects
             .get_mut(proj_name)
@@ -340,10 +340,9 @@ fn update_cell_name(
         project_ref.cells.remove(idx);
         project_ref.cells.insert(idx, new_name.to_string());
         let uuid = project_ref.manifest.clone();
-        let manifest_vec = serde_json::to_vec_pretty(&manifest)?;
-        fs::write(ctx.main_manifest_path(), &manifest_vec)?;
+        ctx.write_main_manifest(&manifest)?;
 
-        let mut project_manifest = load_project_manifest(&ctx.project_manifest_path(uuid.clone()))?;
+        let mut project_manifest = ctx.load_project_manifest(uuid.clone())?;
         let cell_ref = project_manifest
             .cells
             .remove(old_name)
@@ -377,7 +376,7 @@ fn create_cell(
         .interact()?;
 
     if confirmed {
-        let mut manifest = load_manifest(&ctx.main_manifest_path())?;
+        let mut manifest = ctx.load_main_manifest()?;
         let project_ref = manifest
             .projects
             .get_mut(proj_name)
@@ -424,7 +423,7 @@ fn change_project_path(
     manifest.source = path.to_string_lossy().to_string();
     project_ref.path = path.to_string_lossy().to_string();
 
-    update_proj_in_main(&ctx.main_manifest_path(), name, project_ref)?;
+    update_proj_in_main(&ctx, name, project_ref)?;
 
     let json = serde_json::to_vec_pretty(&manifest)?;
     fs::write(manifest_path, json)?;
@@ -436,12 +435,6 @@ fn read_config(path: &PathBuf) -> Result<DenaliToml, Errors> {
     let config_data = fs::read_to_string(config_path)?;
     let config: DenaliToml = toml::from_str(&config_data)?;
     Ok(config)
-}
-
-fn load_manifest(path: &Path) -> Result<MainManifest, Errors> {
-    let manifest_data = fs::read(path)?;
-    let manifest = serde_json::from_slice(&manifest_data)?;
-    Ok(manifest)
 }
 
 fn create_proj(ctx: &AppContext, path: PathBuf, config: &DenaliToml) -> Result<(), Errors> {
@@ -474,21 +467,11 @@ fn create_proj(ctx: &AppContext, path: PathBuf, config: &DenaliToml) -> Result<(
             new_project_ref.cells.push(name.to_string());
             add_cell_to_project(&ctx.project_manifest_path(uuid.to_string()), name, cell_ref)?;
         }
-        add_proj_to_main_manifest(
-            &ctx.main_manifest_path(),
-            &config.root.name,
-            &new_project_ref,
-        )?;
+        add_proj_to_main_manifest(&ctx, &config.root.name, &new_project_ref)?;
         Ok(())
     } else {
         return Err(Errors::Stopped);
     }
-}
-
-fn save_project_manifest(path: &Path, manifest: &ProjectManifest) -> Result<(), Errors> {
-    let json = serde_json::to_vec_pretty(&manifest)?;
-    fs::write(path, json)?;
-    Ok(())
 }
 
 fn add_cell_to_project(file_path: &Path, name: &str, cell: CellRef) -> Result<(), Errors> {
@@ -521,28 +504,24 @@ fn make_project_manifest(
     Ok(project_manifest)
 }
 
-fn load_project_manifest(path: &Path) -> Result<ProjectManifest, Errors> {
-    let data = fs::read(path)?;
-    let manifest = serde_json::from_slice(&data)?;
-    Ok(manifest)
-}
-
 fn add_proj_to_main_manifest(
-    path: &Path,
+    ctx: &AppContext,
     name: &str,
     project_ref: &ProjectRef,
 ) -> Result<(), Errors> {
-    let data = fs::read(path)?;
-    let mut manifest: MainManifest = serde_json::from_slice(&data)?;
+    let mut manifest: MainManifest = ctx.load_main_manifest()?;
     manifest
         .projects
         .insert(name.to_string(), project_ref.clone());
-    let data = serde_json::to_vec_pretty(&manifest)?;
-    fs::write(path, data)?;
+    ctx.write_main_manifest(&manifest)?;
     Ok(())
 }
 
-fn update_proj_name_in_main(path: &Path, old_name: &str, new_name: &str) -> Result<(), Errors> {
+fn update_proj_name_in_main(
+    ctx: &AppContext,
+    old_name: &str,
+    new_name: &str,
+) -> Result<(), Errors> {
     let confirmed = Confirm::new()
         .with_prompt(format!(
             "The project \"{}\" had changed name to \"{}\". Do you wish to change?",
@@ -554,15 +533,13 @@ fn update_proj_name_in_main(path: &Path, old_name: &str, new_name: &str) -> Resu
         .interact()?;
 
     if confirmed {
-        let data = fs::read(path)?;
-        let mut manifest: MainManifest = serde_json::from_slice(&data)?;
+        let mut manifest = ctx.load_main_manifest()?;
         let proj_ref = manifest
             .projects
             .remove(old_name)
             .ok_or(Errors::InternalError)?;
         manifest.projects.insert(new_name.to_string(), proj_ref);
-        let data = serde_json::to_vec_pretty(&manifest)?;
-        fs::write(path, data)?;
+        ctx.write_main_manifest(&manifest)?;
     } else {
         return Err(Errors::Stopped);
     }
@@ -570,16 +547,18 @@ fn update_proj_name_in_main(path: &Path, old_name: &str, new_name: &str) -> Resu
     Ok(())
 }
 
-fn update_proj_in_main(path: &Path, name: &str, project_ref: &ProjectRef) -> Result<(), Errors> {
-    let data = fs::read(path)?;
-    let mut manifest: MainManifest = serde_json::from_slice(&data)?;
+fn update_proj_in_main(
+    ctx: &AppContext,
+    name: &str,
+    project_ref: &ProjectRef,
+) -> Result<(), Errors> {
+    let mut manifest = ctx.load_main_manifest()?;
     let entry = manifest
         .projects
         .get_mut(name)
         .ok_or(Errors::InternalError)?;
 
     *entry = project_ref.clone();
-    let data = serde_json::to_vec_pretty(&manifest)?;
-    fs::write(path, data)?;
+    ctx.write_main_manifest(&manifest)?;
     Ok(())
 }

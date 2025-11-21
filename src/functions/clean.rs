@@ -2,7 +2,7 @@ use std::{collections::HashSet, fs, io::Read, path::Path};
 
 use zstd::Decoder;
 
-use crate::utils::{Errors, MainManifest, ProjectManifest, Snapshot, context::AppContext};
+use crate::utils::{Errors, context::AppContext};
 
 pub fn clean(ctx: &AppContext, is_dry: bool) -> Result<(), Errors> {
     let mut objects = HashSet::new();
@@ -78,10 +78,9 @@ fn mark_entries(
     objects: &mut HashSet<String>,
 ) -> Result<(), Errors> {
     let mut good_entries: HashSet<String> = HashSet::new();
-    let manifest = load_manifest(&ctx.main_manifest_path())?;
+    let manifest = ctx.load_main_manifest()?;
     for (_, project_ref) in &manifest.projects {
-        let project_manifest =
-            load_project_manifest(&ctx.project_manifest_path(project_ref.manifest.clone()))?;
+        let project_manifest = ctx.load_project_manifest(project_ref.manifest.clone())?;
         for (_, snapshot) in &project_manifest.snapshots {
             good_entries.insert(snapshot.hash.clone());
         }
@@ -116,7 +115,7 @@ fn mark_orphans(
         }
     }
     for snapshot in good_entries.iter() {
-        let snap = read_snapshot(ctx, snapshot.to_string())?;
+        let snap = ctx.load_snapshot(snapshot.to_string())?;
         mark_objects(ctx, &snap.root, objects, &snapshots)?;
     }
     Ok(())
@@ -152,7 +151,7 @@ fn mark_objects(
         if entry.mode == "20" {
             good_entries.insert(hex::encode(entry.hash));
         } else if entry.mode == "30" {
-            let snap = read_snapshot(ctx, hex::encode(entry.hash))?;
+            let snap = ctx.load_snapshot(hex::encode(entry.hash))?;
             if !bad_snapshots.contains(&snap.root) {
                 mark_objects(ctx, &snap.root, good_entries, bad_snapshots)?;
             }
@@ -195,33 +194,4 @@ fn parse_tree(tree: &Vec<u8>) -> Result<Vec<TreeStruct>, Errors> {
     }
 
     Ok(entries)
-}
-
-fn read_snapshot(ctx: &AppContext, hash: String) -> Result<Snapshot, Errors> {
-    let dir = &hash[..3];
-    let filename = &hash[3..];
-
-    let meta_path = ctx.snapshots_path().join(dir).join(filename);
-    let meta_data_cmp = fs::read(meta_path)?;
-    let mut meta_data = Vec::new();
-    {
-        let mut decoder = Decoder::new(&meta_data_cmp[..])?;
-        decoder.read_to_end(&mut meta_data)?;
-    }
-
-    let meta: Snapshot = serde_json::from_slice(&meta_data)?;
-
-    Ok(meta)
-}
-
-fn load_project_manifest(path: &Path) -> Result<ProjectManifest, Errors> {
-    let data = fs::read(path)?;
-    let manifest = serde_json::from_slice(&data)?;
-    Ok(manifest)
-}
-
-fn load_manifest(path: &Path) -> Result<MainManifest, Errors> {
-    let manifest_data = fs::read(path)?;
-    let manifest = serde_json::from_slice(&manifest_data)?;
-    Ok(manifest)
 }

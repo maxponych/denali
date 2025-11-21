@@ -3,12 +3,13 @@ use crate::utils::context::AppContext;
 use crate::utils::*;
 use chrono::Utc;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::{env, fs};
 use uuid::Uuid;
 
 fn make_project_manifest(
-    manifest_path: PathBuf,
+    ctx: &AppContext,
+    uuid: String,
     path: &Path,
     description: String,
 ) -> Result<(), Errors> {
@@ -20,8 +21,7 @@ fn make_project_manifest(
         cells: HashMap::new(),
     };
 
-    let json = serde_json::to_vec_pretty(&project_manifest)?;
-    fs::write(manifest_path, json)?;
+    ctx.write_project_manifest(uuid, &project_manifest)?;
     Ok(())
 }
 
@@ -38,15 +38,18 @@ fn make_config(path: &Path, config: DenaliToml) -> Result<(), Errors> {
     Ok(())
 }
 
-fn update_project_manifest_cell(path: PathBuf, name: String, cell: CellRef) -> Result<(), Errors> {
-    let manifest_data = fs::read(&path)?;
-    let mut manifest: ProjectManifest = serde_json::from_slice(&manifest_data)?;
+fn update_project_manifest_cell(
+    ctx: &AppContext,
+    uuid: String,
+    name: String,
+    cell: CellRef,
+) -> Result<(), Errors> {
+    let mut manifest: ProjectManifest = ctx.load_project_manifest(uuid.clone())?;
     if manifest.source == cell.path {
         return Err(Errors::ParentPath(cell.path));
     }
     manifest.cells.insert(name, cell);
-    let json = serde_json::to_vec_pretty(&manifest)?;
-    fs::write(path, json)?;
+    ctx.write_project_manifest(uuid, &manifest)?;
     Ok(())
 }
 
@@ -124,11 +127,7 @@ pub fn init(
             cells: HashMap::new(),
         };
         make_config(&dir, config_data)?;
-        make_project_manifest(
-            ctx.project_manifest_path(uuid.to_string()),
-            &dir,
-            desc.to_string(),
-        )?;
+        make_project_manifest(ctx, uuid.to_string(), &dir, desc.to_string())?;
         manifest.projects.insert(project.clone(), project_ref);
     } else {
         let cell_name = cell.unwrap();
@@ -152,11 +151,7 @@ pub fn init(
             snapshot_after: String::new(),
             snapshot_before: String::new(),
         };
-        update_project_manifest_cell(
-            ctx.project_manifest_path(proj_ref.manifest.clone()),
-            cell_name.clone(),
-            new_cell,
-        )?;
+        update_project_manifest_cell(ctx, proj_ref.manifest.clone(), cell_name.clone(), new_cell)?;
         update_project_config(Path::new(&proj_ref.path), cell_name.clone(), cell_conf)?;
     }
 

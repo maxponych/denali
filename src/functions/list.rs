@@ -1,13 +1,12 @@
 use colored::*;
 use std::collections::HashMap;
-use std::fs;
 
 use crate::utils::context::AppContext;
 use crate::utils::{CellRef, Errors, MainManifest, ProjectManifest, ProjectRef, Snapshots};
 
 pub fn list(ctx: &AppContext, name: String) -> Result<(), Errors> {
     let (cell, project_name) = parse_name(&name)?;
-    let manifest = load_main_manifest(ctx)?;
+    let manifest = ctx.load_main_manifest()?;
     if project_name == "all" && cell.is_none() {
         return print_all_projects(ctx, &manifest);
     }
@@ -15,7 +14,7 @@ pub fn list(ctx: &AppContext, name: String) -> Result<(), Errors> {
         .projects
         .get(&project_name)
         .ok_or(Errors::InternalError)?;
-    let proj_manifest = load_project_manifest(ctx, proj_ref)?;
+    let proj_manifest = ctx.load_project_manifest(proj_ref.manifest.clone())?;
     if let Some(cell_name) = cell {
         let cell_ref = proj_manifest
             .cells
@@ -137,21 +136,6 @@ fn parse_name(name: &str) -> Result<(Option<String>, String), Errors> {
     }
 }
 
-fn load_main_manifest(ctx: &AppContext) -> Result<MainManifest, Errors> {
-    let path = ctx.main_manifest_path();
-    let data = fs::read(path)?;
-    Ok(serde_json::from_slice(&data)?)
-}
-
-fn load_project_manifest(
-    ctx: &AppContext,
-    proj_ref: &ProjectRef,
-) -> Result<ProjectManifest, Errors> {
-    let path = ctx.project_manifest_path(proj_ref.manifest.clone());
-    let data = fs::read(path)?;
-    Ok(serde_json::from_slice(&data)?)
-}
-
 fn latest_snapshot_name<'a>(
     snapshots: &'a HashMap<String, Snapshots>,
     latest_hash: &str,
@@ -172,7 +156,7 @@ fn print_all_projects(ctx: &AppContext, manifest: &MainManifest) -> Result<(), E
     projects.sort_by_key(|(name, _)| *name);
 
     for (i, (name, proj_ref)) in projects.into_iter().enumerate() {
-        let proj_manifest = load_project_manifest(ctx, proj_ref)?;
+        let proj_manifest = ctx.load_project_manifest(proj_ref.manifest.clone())?;
         print_project_tree(name, proj_ref, &proj_manifest)?;
         if i + 1 < manifest.projects.len() {
             println!();

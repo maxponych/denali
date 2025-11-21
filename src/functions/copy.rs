@@ -45,9 +45,7 @@ pub fn copy(ctx: &AppContext, project: String, path: Option<&Path>) -> Result<()
     if cell == None && project_name == "all" {
         for (_, project_ref) in &manifest.projects {
             let uuid = project_ref.manifest.clone();
-            let project_manifest_path = ctx.project_manifest_path(uuid.clone());
-            let project_manifest_data = fs::read(project_manifest_path)?;
-            let project_manifest: ProjectManifest = serde_json::from_slice(&project_manifest_data)?;
+            let project_manifest: ProjectManifest = ctx.load_project_manifest(uuid.clone())?;
 
             for (_, snapshot) in &project_manifest.snapshots {
                 copy_tree(
@@ -83,9 +81,7 @@ pub fn copy(ctx: &AppContext, project: String, path: Option<&Path>) -> Result<()
             .remove(&project_name)
             .ok_or(Errors::ProjectNotFound(project_name.clone()))?;
         let uuid = proj_in_main.manifest.clone();
-        let project_manifest_path = ctx.project_manifest_path(uuid.clone());
-        let project_manifest_data = fs::read(project_manifest_path)?;
-        let project_manifest: ProjectManifest = serde_json::from_slice(&project_manifest_data)?;
+        let project_manifest: ProjectManifest = ctx.load_project_manifest(uuid.clone())?;
         let mut manifest_obj: MainManifest = MainManifest {
             projects: HashMap::new(),
             templates: HashMap::new(),
@@ -127,9 +123,7 @@ pub fn copy(ctx: &AppContext, project: String, path: Option<&Path>) -> Result<()
         .remove(&project_name)
         .ok_or(Errors::ProjectNotFound(project_name.clone()))?;
     let uuid = proj_ref.manifest.clone();
-    let project_manifest_path = ctx.project_manifest_path(uuid.clone());
-    let project_manifest_data = fs::read(project_manifest_path)?;
-    let mut project_manifest: ProjectManifest = serde_json::from_slice(&project_manifest_data)?;
+    let mut project_manifest: ProjectManifest = ctx.load_project_manifest(uuid.clone())?;
 
     let new_proj_ref: ProjectRef = ProjectRef {
         path: proj_ref.path,

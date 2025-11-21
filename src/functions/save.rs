@@ -1,15 +1,15 @@
 use chrono::Utc;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 
-use crate::{
-    objects::{make_tree, save_object::save_snapshot},
-    utils::{
-        DenaliToml, Errors, MainManifest, ProjectManifest, Snapshot, Snapshots, context::AppContext,
-    },
+use crate::utils::{
+    DenaliToml, Errors, MainManifest, ProjectManifest, Snapshot, Snapshots, context::AppContext,
 };
 use std::{
     collections::HashMap,
-    fs,
+    ffi::OsString,
+    fs::{self, File},
+    io::Read,
+    os::unix::ffi::OsStrExt,
     path::{Path, PathBuf},
 };
 
@@ -55,8 +55,8 @@ pub fn save(
 
     if cell == None {
         let hash_list = make_project_save(
-            &ctx.root,
-            ctx.project_manifest_path(uuid),
+            ctx,
+            uuid,
             desc,
             &manifest
                 .projects
@@ -69,7 +69,7 @@ pub fn save(
     }
 
     save_cell(
-        &ctx.root,
+        ctx,
         ctx.project_manifest_path(
             manifest
                 .projects
@@ -86,7 +86,7 @@ pub fn save(
 }
 
 fn save_cell(
-    root_dir: &Path,
+    ctx: &AppContext,
     manifest_path: PathBuf,
     name: &str,
     cell: &str,
@@ -106,7 +106,7 @@ fn save_cell(
     let glob = build_globset(&ignore)?;
 
     let hash = hash_dir(
-        root_dir,
+        ctx,
         Path::new(
             &project_manifest
                 .cells
@@ -146,13 +146,12 @@ fn build_globset(patterns: &[String]) -> Result<GlobSet, Errors> {
 }
 
 fn make_project_save(
-    root_dir: &Path,
-    manifest_path: PathBuf,
+    ctx: &AppContext,
+    uuid: String,
     description: &str,
     cells: &Vec<String>,
 ) -> Result<HashMap<String, [u8; 32]>, Errors> {
-    let data = fs::read(&manifest_path)?;
-    let proj_manifest: ProjectManifest = serde_json::from_slice(&data)?;
+    let proj_manifest: ProjectManifest = ctx.load_project_manifest(uuid)?;
     let source_dir = &proj_manifest.source;
     let config_data = fs::read_to_string(Path::new(&source_dir).join(".denali.toml"))?;
     let config: DenaliToml = toml::from_str(&config_data)?;
@@ -180,7 +179,7 @@ fn make_project_save(
     }
 
     Ok(save_project(
-        root_dir,
+        ctx,
         description,
         &Path::new(&proj_manifest.source),
         &build_globset(&root_ignore)?,
@@ -255,7 +254,7 @@ pub fn update_all_manifests(
 }
 
 fn save_project(
-    root_dir: &Path,
+    ctx: &AppContext,
     description: &str,
     path: &Path,
     ignore: &GlobSet,
@@ -266,7 +265,7 @@ fn save_project(
 
     for (cell, cell_path) in &cells {
         let hash = hash_dir(
-            root_dir,
+            ctx,
             &cell_path,
             ignore_cells.get(cell).ok_or(Errors::InternalError)?,
             description,
@@ -275,19 +274,19 @@ fn save_project(
         cells_hash.insert(cell.to_string(), hash);
     }
 
-    let root_hash = hash_dir(root_dir, path, ignore, description, &cells_hash)?;
+    let root_hash = hash_dir(ctx, path, ignore, description, &cells_hash)?;
     cells_hash.insert("root".to_string(), root_hash);
     Ok(cells_hash)
 }
 
 fn hash_dir(
-    root_dir: &Path,
+    ctx: &AppContext,
     path: &Path,
     ignore: &GlobSet,
     description: &str,
     cells: &HashMap<String, [u8; 32]>,
 ) -> Result<[u8; 32], Errors> {
-    let hash = make_tree(root_dir, path, ignore, cells, path)?;
+    let hash = make_tree(ctx, path, ignore, cells, path)?;
 
     let snapshot: Snapshot = Snapshot {
         description: description.to_string(),
@@ -297,5 +296,98 @@ fn hash_dir(
 
     let content = serde_json::to_vec(&snapshot)?;
 
-    Ok(save_snapshot(root_dir, content)?)
+    Ok(ctx.save_snapshot(content)?)
+}
+
+struct TreeStruct {
+    mode: String,
+    name: OsString,
+    hash: [u8; 32],
+}
+
+fn build_tree(ctx: &AppContext, entries: Vec<TreeStruct>) -> Result<[u8; 32], Errors> {
+    let mut content = Vec::new();
+
+    for entry in entries {
+        content.extend_from_slice(entry.mode.as_bytes());
+        content.push(b' ');
+        content.extend_from_slice(entry.name.as_bytes());
+        content.push(0);
+        content.extend_from_slice(&entry.hash);
+    }
+
+    let hash = ctx.save_object(content)?;
+    Ok(hash)
+}
+
+fn hash_file(ctx: &AppContext, path: &Path) -> Result<[u8; 32], Errors> {
+    let mut file = File::open(path)?;
+    let mut content = Vec::new();
+    file.read_to_end(&mut content)?;
+
+    let hash = ctx.save_object(content)?;
+    Ok(hash)
+}
+
+pub fn make_tree(
+    ctx: &AppContext,
+    path: &Path,
+    ignore: &GlobSet,
+    cells: &HashMap<String, [u8; 32]>,
+    root_path: &Path,
+) -> Result<[u8; 32], Errors> {
+    let mut entries: Vec<TreeStruct> = Vec::new();
+
+    let mode_dir = "10";
+    let mode_file = "20";
+    let mode_cell = "30";
+
+    for (name, hash) in cells {
+        entries.push(TreeStruct {
+            mode: mode_cell.to_string(),
+            name: OsString::from(name.clone()),
+            hash: hash.clone(),
+        });
+    }
+
+    if path.is_dir() {
+        for entry in fs::read_dir(path)? {
+            let entry = entry?;
+            let path = entry.path();
+            let name_os = path
+                .file_name()
+                .ok_or(Errors::DoesntExist(path.to_path_buf()))?;
+
+            if ignore.is_match(path.strip_prefix(&root_path).unwrap_or(&path)) {
+                continue;
+            }
+
+            let hash = if path.is_dir() {
+                make_tree(ctx, &path, &ignore, &HashMap::new(), root_path)?
+            } else {
+                hash_file(ctx, &path)?
+            };
+
+            entries.push(TreeStruct {
+                mode: if path.is_dir() { mode_dir } else { mode_file }.to_string(),
+                name: name_os.to_os_string(),
+                hash,
+            });
+        }
+    } else {
+        if !ignore.is_match(path.strip_prefix(&root_path).unwrap_or(&path)) {
+            let name_os = path
+                .file_name()
+                .ok_or(Errors::DoesntExist(path.to_path_buf()))?;
+            let hash = hash_file(ctx, path)?;
+            entries.push(TreeStruct {
+                mode: mode_file.to_string(),
+                name: name_os.to_os_string(),
+                hash,
+            });
+        }
+    };
+
+    let hash = build_tree(ctx, entries)?;
+    Ok(hash)
 }
