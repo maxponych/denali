@@ -5,7 +5,7 @@ mod utils;
 
 use clap::Parser;
 use commands::{Cli, Commands, TmplCommand};
-use utils::*;
+use utils::{context::AppContext, *};
 
 use colored::*;
 use functions::*;
@@ -19,17 +19,18 @@ fn main() {
 
 fn run() -> Result<(), Errors> {
     let cli = Cli::parse();
+    let ctx = AppContext::new(cli.root)?;
     match cli.command {
         Commands::Init {
             name,
             path,
             description,
-        } => init(name, path.as_deref(), description.as_deref())?,
+        } => init(&ctx, name, path.as_deref(), description.as_deref())?,
         Commands::Save {
             project,
             name,
             description,
-        } => save(project, name, description.as_deref())?,
+        } => save(&ctx, project, name, description.as_deref())?,
         Commands::Load {
             project,
             name,
@@ -37,21 +38,20 @@ fn run() -> Result<(), Errors> {
             before,
             after,
             with_config,
-            from,
         } => load(
+            &ctx,
             project,
             name,
             path.as_deref(),
             before,
             after,
             with_config,
-            from.as_deref(),
         )?,
-        Commands::List { project, from } => list(project, from.as_deref())?,
-        Commands::Copy { project, path } => copy(project, path.as_deref())?,
-        Commands::Check { path } => check(path.as_deref())?,
-        Commands::Remove { project } => remove(project)?,
-        Commands::Clean { dry } => clean(dry)?,
+        Commands::List { project } => list(&ctx, project)?,
+        Commands::Copy { project, path } => copy(&ctx, project, path.as_deref())?,
+        Commands::Check { path } => check(&ctx, path.as_deref())?,
+        Commands::Remove { project } => remove(&ctx, project)?,
+        Commands::Clean { dry } => clean(&ctx, dry)?,
         Commands::Tmpl { sub } => match sub {
             TmplCommand::New { name, path } => None.unwrap(),
             TmplCommand::Apply { name, path } => None.unwrap(),

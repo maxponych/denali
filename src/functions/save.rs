@@ -3,7 +3,9 @@ use globset::{Glob, GlobSet, GlobSetBuilder};
 
 use crate::{
     objects::{make_tree, save_object::save_snapshot},
-    utils::*,
+    utils::{
+        DenaliToml, Errors, MainManifest, ProjectManifest, Snapshot, Snapshots, context::AppContext,
+    },
 };
 use std::{
     collections::HashMap,
@@ -11,11 +13,15 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub fn save(project: String, name: String, description: Option<&str>) -> Result<(), Errors> {
+pub fn save(
+    ctx: &AppContext,
+    project: String,
+    name: String,
+    description: Option<&str>,
+) -> Result<(), Errors> {
     let desc = description.unwrap_or("");
 
-    let root = denali_root();
-    let manifest_path = root.join("manifest.json");
+    let manifest_path = ctx.main_manifest_path();
     let manifest_data = fs::read(&manifest_path)?;
     let mut manifest: MainManifest = serde_json::from_slice(&manifest_data)?;
 
@@ -40,46 +46,53 @@ pub fn save(project: String, name: String, description: Option<&str>) -> Result<
         }
     }
 
-    let uuid = &manifest
+    let uuid = manifest
         .projects
         .get(&project)
         .ok_or(Errors::InternalError)?
-        .manifest;
+        .manifest
+        .clone();
 
     if cell == None {
         let hash_list = make_project_save(
+            &ctx.root,
+            ctx.project_manifest_path(uuid),
             desc,
-            uuid,
             &manifest
                 .projects
                 .get(&project)
                 .ok_or(Errors::InternalError)?
                 .cells,
         )?;
-        update_all_manifests(&name, &project, &mut manifest, hash_list)?;
+        update_all_manifests(ctx, &name, &project, &mut manifest, hash_list)?;
         return Ok(());
     }
 
     save_cell(
+        &ctx.root,
+        ctx.project_manifest_path(
+            manifest
+                .projects
+                .get(&project)
+                .ok_or(Errors::InternalError)?
+                .manifest
+                .clone(),
+        ),
         &name,
         &cell.ok_or(Errors::InternalError)?,
         desc,
-        manifest
-            .projects
-            .get(&project)
-            .ok_or(Errors::InternalError)?
-            .manifest
-            .clone(),
     )?;
     Ok(())
 }
 
-fn save_cell(name: &str, cell: &str, description: &str, uuid: String) -> Result<(), Errors> {
-    let file_path = denali_root()
-        .join("snapshots")
-        .join("projects")
-        .join(format!("{}.json", uuid));
-    let manifest_data = fs::read(&file_path)?;
+fn save_cell(
+    root_dir: &Path,
+    manifest_path: PathBuf,
+    name: &str,
+    cell: &str,
+    description: &str,
+) -> Result<(), Errors> {
+    let manifest_data = fs::read(&manifest_path)?;
     let mut project_manifest: ProjectManifest = serde_json::from_slice(&manifest_data)?;
 
     if project_manifest.snapshots.contains_key(name) {
@@ -93,6 +106,7 @@ fn save_cell(name: &str, cell: &str, description: &str, uuid: String) -> Result<
     let glob = build_globset(&ignore)?;
 
     let hash = hash_dir(
+        root_dir,
         Path::new(
             &project_manifest
                 .cells
@@ -118,7 +132,7 @@ fn save_cell(name: &str, cell: &str, description: &str, uuid: String) -> Result<
     }
     let project_data = serde_json::to_vec_pretty(&project_manifest)?;
 
-    fs::write(file_path, project_data)?;
+    fs::write(manifest_path, project_data)?;
 
     Ok(())
 }
@@ -132,19 +146,15 @@ fn build_globset(patterns: &[String]) -> Result<GlobSet, Errors> {
 }
 
 fn make_project_save(
+    root_dir: &Path,
+    manifest_path: PathBuf,
     description: &str,
-    uuid: &String,
     cells: &Vec<String>,
 ) -> Result<HashMap<String, [u8; 32]>, Errors> {
-    let data = fs::read(
-        denali_root()
-            .join("snapshots")
-            .join("projects")
-            .join(format!("{}.json", uuid)),
-    )?;
+    let data = fs::read(&manifest_path)?;
     let proj_manifest: ProjectManifest = serde_json::from_slice(&data)?;
-    let root_dir = &proj_manifest.source;
-    let config_data = fs::read_to_string(Path::new(&root_dir).join(".denali.toml"))?;
+    let source_dir = &proj_manifest.source;
+    let config_data = fs::read_to_string(Path::new(&source_dir).join(".denali.toml"))?;
     let config: DenaliToml = toml::from_str(&config_data)?;
     let mut cells_map: HashMap<String, PathBuf> = HashMap::new();
     let mut ignore_cells: HashMap<String, GlobSet> = HashMap::new();
@@ -162,7 +172,7 @@ fn make_project_save(
             build_globset(&config.cells.get(cell).ok_or(Errors::InternalError)?.ignore)?,
         );
 
-        if Path::new(&path).starts_with(&root_dir) {
+        if Path::new(&path).starts_with(&source_dir) {
             if let Some(name) = Path::new(&path).file_name() {
                 root_ignore.push(name.to_string_lossy().to_string());
             }
@@ -170,6 +180,7 @@ fn make_project_save(
     }
 
     Ok(save_project(
+        root_dir,
         description,
         &Path::new(&proj_manifest.source),
         &build_globset(&root_ignore)?,
@@ -179,6 +190,7 @@ fn make_project_save(
 }
 
 pub fn update_all_manifests(
+    ctx: &AppContext,
     name: &str,
     project: &str,
     manifest: &mut MainManifest,
@@ -191,11 +203,7 @@ pub fn update_all_manifests(
         .manifest
         .clone();
 
-    let file_path = denali_root()
-        .join("snapshots")
-        .join("projects")
-        .join(format!("{}.json", uuid));
-    let manifest_data = fs::read(&file_path)?;
+    let manifest_data = fs::read(ctx.project_manifest_path(uuid.clone()))?;
     let mut project_manifest: ProjectManifest = serde_json::from_slice(&manifest_data)?;
 
     let mut root_hash: Option<String> = None;
@@ -235,23 +243,19 @@ pub fn update_all_manifests(
         }
     }
 
-    let root = denali_root();
-    let manifest_path = root.join("manifest.json");
-    let file_path = root
-        .join("snapshots")
-        .join("projects")
-        .join(format!("{}.json", uuid));
+    let manifest_path = ctx.main_manifest_path();
 
     let mani_json = serde_json::to_vec_pretty(manifest)?;
     let proj_json = serde_json::to_vec_pretty(&project_manifest)?;
 
     fs::write(&manifest_path, mani_json)?;
-    fs::write(&file_path, proj_json)?;
+    fs::write(ctx.project_manifest_path(uuid), proj_json)?;
 
     Ok(())
 }
 
 fn save_project(
+    root_dir: &Path,
     description: &str,
     path: &Path,
     ignore: &GlobSet,
@@ -262,6 +266,7 @@ fn save_project(
 
     for (cell, cell_path) in &cells {
         let hash = hash_dir(
+            root_dir,
             &cell_path,
             ignore_cells.get(cell).ok_or(Errors::InternalError)?,
             description,
@@ -270,18 +275,19 @@ fn save_project(
         cells_hash.insert(cell.to_string(), hash);
     }
 
-    let root_hash = hash_dir(path, ignore, description, &cells_hash)?;
+    let root_hash = hash_dir(root_dir, path, ignore, description, &cells_hash)?;
     cells_hash.insert("root".to_string(), root_hash);
     Ok(cells_hash)
 }
 
 fn hash_dir(
+    root_dir: &Path,
     path: &Path,
     ignore: &GlobSet,
     description: &str,
     cells: &HashMap<String, [u8; 32]>,
 ) -> Result<[u8; 32], Errors> {
-    let hash = make_tree(path, ignore, cells, path)?;
+    let hash = make_tree(root_dir, path, ignore, cells, path)?;
 
     let snapshot: Snapshot = Snapshot {
         description: description.to_string(),
@@ -291,5 +297,5 @@ fn hash_dir(
 
     let content = serde_json::to_vec(&snapshot)?;
 
-    Ok(save_snapshot(content)?)
+    Ok(save_snapshot(root_dir, content)?)
 }

@@ -18,7 +18,7 @@ struct TreeStruct {
     hash: [u8; 32],
 }
 
-fn build_tree(entries: Vec<TreeStruct>) -> Result<[u8; 32], Errors> {
+fn build_tree(root: &Path, entries: Vec<TreeStruct>) -> Result<[u8; 32], Errors> {
     let mut content = Vec::new();
 
     for entry in entries {
@@ -29,24 +29,25 @@ fn build_tree(entries: Vec<TreeStruct>) -> Result<[u8; 32], Errors> {
         content.extend_from_slice(&entry.hash);
     }
 
-    let hash = save_object(content)?;
+    let hash = save_object(root, content)?;
     Ok(hash)
 }
 
-fn hash_file(path: &Path) -> Result<[u8; 32], Errors> {
+fn hash_file(root: &Path, path: &Path) -> Result<[u8; 32], Errors> {
     let mut file = File::open(path)?;
     let mut content = Vec::new();
     file.read_to_end(&mut content)?;
 
-    let hash = save_object(content)?;
+    let hash = save_object(root, content)?;
     Ok(hash)
 }
 
 pub fn make_tree(
+    root_dir: &Path,
     path: &Path,
     ignore: &GlobSet,
     cells: &HashMap<String, [u8; 32]>,
-    root: &Path,
+    root_path: &Path,
 ) -> Result<[u8; 32], Errors> {
     let mut entries: Vec<TreeStruct> = Vec::new();
 
@@ -70,14 +71,14 @@ pub fn make_tree(
                 .file_name()
                 .ok_or(Errors::DoesntExist(path.to_path_buf()))?;
 
-            if ignore.is_match(path.strip_prefix(&root).unwrap_or(&path)) {
+            if ignore.is_match(path.strip_prefix(&root_path).unwrap_or(&path)) {
                 continue;
             }
 
             let hash = if path.is_dir() {
-                make_tree(&path, &ignore, &HashMap::new(), root)?
+                make_tree(root_dir, &path, &ignore, &HashMap::new(), root_path)?
             } else {
-                hash_file(&path)?
+                hash_file(root_dir, &path)?
             };
 
             entries.push(TreeStruct {
@@ -87,11 +88,11 @@ pub fn make_tree(
             });
         }
     } else {
-        if !ignore.is_match(path.strip_prefix(&root).unwrap_or(&path)) {
+        if !ignore.is_match(path.strip_prefix(&root_path).unwrap_or(&path)) {
             let name_os = path
                 .file_name()
                 .ok_or(Errors::DoesntExist(path.to_path_buf()))?;
-            let hash = hash_file(path)?;
+            let hash = hash_file(root_dir, path)?;
             entries.push(TreeStruct {
                 mode: mode_file.to_string(),
                 name: name_os.to_os_string(),
@@ -100,6 +101,6 @@ pub fn make_tree(
         }
     };
 
-    let hash = build_tree(entries)?;
+    let hash = build_tree(root_dir, entries)?;
     Ok(hash)
 }

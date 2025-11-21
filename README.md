@@ -37,6 +37,7 @@ denali load myproject "initial setup"
 ```
 
 ## Commands
+Each command accepts a --root <path> argument, which specifies the path to the object store. For example, if your object store is located at usb/projects/.denali, you should set --root to the directory containing it, e.g. `--root usb/projects`.
 
 ### `denali init <name> -p <path> [-d <description>]`
 Initialize a project or cell.
@@ -52,7 +53,6 @@ Restore a snapshot.
 - `-b <date>` / `--before <date>` - load newest before this time
 - `-a <date>` / `--after <date>` - load newest after this time
 - `-c` / `--with-config` - include .denali.toml config file
-- `-f <path>` / `--from <path>` - load from alternate .denali directory
 
 ### `denali copy <name> -p <path>`
 Export project/cell to specified directory (use `all` to copy everything).
@@ -66,7 +66,7 @@ Remove project/cell from manifests. *Deleting a cell will remove it from all sna
 ### `denali clean [--dry]`
 Clean detached objects. `--dry` is going to return hashes of snapshots metadata that is going to be removed.
 
-### `denali check [-p <path>]`
+### `denali check `
 Compare config file with manifests. `-p` must point to the directory containing the `denali.toml` file.
 
 ## Config file -  `.denali.toml`

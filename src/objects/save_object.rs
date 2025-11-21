@@ -2,9 +2,10 @@ use crate::utils::*;
 use blake3;
 use std::fs;
 use std::io::Write;
+use std::path::Path;
 use zstd::stream::Encoder;
 
-pub fn save_object(content: Vec<u8>) -> Result<[u8; 32], Errors> {
+pub fn save_object(root_dir: &Path, content: Vec<u8>) -> Result<[u8; 32], Errors> {
     let mut compressed = Vec::new();
     {
         let mut encoder = Encoder::new(&mut compressed, 3)?;
@@ -17,7 +18,7 @@ pub fn save_object(content: Vec<u8>) -> Result<[u8; 32], Errors> {
     let dir = &name[..3];
     let filename = &name[3..];
 
-    let obj_path = denali_root().join("objects").join(dir);
+    let obj_path = root_dir.join("objects").join(dir);
     fs::create_dir_all(&obj_path)?;
     let file_path = obj_path.join(filename);
 
@@ -26,7 +27,7 @@ pub fn save_object(content: Vec<u8>) -> Result<[u8; 32], Errors> {
     Ok(*hash.as_bytes())
 }
 
-pub fn save_snapshot(content: Vec<u8>) -> Result<[u8; 32], Errors> {
+pub fn save_snapshot(root_dir: &Path, content: Vec<u8>) -> Result<[u8; 32], Errors> {
     let mut compressed = Vec::new();
     {
         let mut encoder = Encoder::new(&mut compressed, 3)?;
@@ -39,7 +40,7 @@ pub fn save_snapshot(content: Vec<u8>) -> Result<[u8; 32], Errors> {
     let dir = &name[..3];
     let filename = &name[3..];
 
-    let obj_path = denali_root().join("snapshots").join("meta").join(dir);
+    let obj_path = root_dir.join("snapshots").join("meta").join(dir);
     fs::create_dir_all(&obj_path)?;
     let file_path = obj_path.join(filename);
 

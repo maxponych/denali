@@ -1,13 +1,17 @@
 use crate::DenaliToml;
-use crate::utils::root_dir::make_root_dir;
+use crate::utils::context::AppContext;
 use crate::utils::*;
 use chrono::Utc;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::{env, fs};
 use uuid::Uuid;
 
-fn make_project_manifest(uuid: Uuid, path: &Path, description: String) -> Result<(), Errors> {
+fn make_project_manifest(
+    manifest_path: PathBuf,
+    path: &Path,
+    description: String,
+) -> Result<(), Errors> {
     let project_manifest: ProjectManifest = ProjectManifest {
         source: path.to_string_lossy().to_string(),
         description: description,
@@ -17,12 +21,7 @@ fn make_project_manifest(uuid: Uuid, path: &Path, description: String) -> Result
     };
 
     let json = serde_json::to_vec_pretty(&project_manifest)?;
-    let file_path = denali_root()
-        .join("snapshots")
-        .join("projects")
-        .join(format!("{}.json", uuid.to_string()));
-
-    fs::write(file_path, json)?;
+    fs::write(manifest_path, json)?;
     Ok(())
 }
 
@@ -39,19 +38,15 @@ fn make_config(path: &Path, config: DenaliToml) -> Result<(), Errors> {
     Ok(())
 }
 
-fn update_project_manifest_cell(uuid: String, name: String, cell: CellRef) -> Result<(), Errors> {
-    let file_path = denali_root()
-        .join("snapshots")
-        .join("projects")
-        .join(format!("{}.json", uuid));
-    let manifest_data = fs::read(&file_path)?;
+fn update_project_manifest_cell(path: PathBuf, name: String, cell: CellRef) -> Result<(), Errors> {
+    let manifest_data = fs::read(&path)?;
     let mut manifest: ProjectManifest = serde_json::from_slice(&manifest_data)?;
     if manifest.source == cell.path {
         return Err(Errors::ParentPath(cell.path));
     }
     manifest.cells.insert(name, cell);
     let json = serde_json::to_vec_pretty(&manifest)?;
-    fs::write(file_path, json)?;
+    fs::write(path, json)?;
     Ok(())
 }
 
@@ -65,7 +60,12 @@ fn update_project_config(path: &Path, name: String, cell: CellConfig) -> Result<
     Ok(())
 }
 
-pub fn init(name: String, path: Option<&Path>, description: Option<&str>) -> Result<(), Errors> {
+pub fn init(
+    ctx: &AppContext,
+    name: String,
+    path: Option<&Path>,
+    description: Option<&str>,
+) -> Result<(), Errors> {
     let dir = match path {
         Some(p) => env::current_dir()?.join(p),
         None => env::current_dir()?,
@@ -79,13 +79,9 @@ pub fn init(name: String, path: Option<&Path>, description: Option<&str>) -> Res
         return Err(Errors::NotADir(dir));
     }
 
-    let root = denali_root();
-    if !root.exists() {
-        make_root_dir(root.clone())?;
-    } else if !root.is_dir() {
-        return Err(Errors::NotADir(root));
-    }
-    let manifest_path = root.join("manifest.json");
+    ctx.make_root_dir()?;
+
+    let manifest_path = ctx.main_manifest_path();
     let manifest_data = fs::read(&manifest_path)?;
     let mut manifest: MainManifest = serde_json::from_slice(&manifest_data)?;
 
@@ -128,7 +124,11 @@ pub fn init(name: String, path: Option<&Path>, description: Option<&str>) -> Res
             cells: HashMap::new(),
         };
         make_config(&dir, config_data)?;
-        make_project_manifest(uuid, &dir, desc.to_string())?;
+        make_project_manifest(
+            ctx.project_manifest_path(uuid.to_string()),
+            &dir,
+            desc.to_string(),
+        )?;
         manifest.projects.insert(project.clone(), project_ref);
     } else {
         let cell_name = cell.unwrap();
@@ -152,7 +152,11 @@ pub fn init(name: String, path: Option<&Path>, description: Option<&str>) -> Res
             snapshot_after: String::new(),
             snapshot_before: String::new(),
         };
-        update_project_manifest_cell(proj_ref.manifest.clone(), cell_name.clone(), new_cell)?;
+        update_project_manifest_cell(
+            ctx.project_manifest_path(proj_ref.manifest.clone()),
+            cell_name.clone(),
+            new_cell,
+        )?;
         update_project_config(Path::new(&proj_ref.path), cell_name.clone(), cell_conf)?;
     }
 

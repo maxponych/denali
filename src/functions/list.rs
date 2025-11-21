@@ -1,50 +1,21 @@
 use colored::*;
-use std::path::PathBuf;
-use std::sync::OnceLock;
-use std::{collections::HashMap, path::Path};
-use std::{env, fs};
+use std::collections::HashMap;
+use std::fs;
 
-use crate::utils::{
-    CellRef, Errors, MainManifest, ProjectManifest, ProjectRef, Snapshots, denali_root,
-};
+use crate::utils::context::AppContext;
+use crate::utils::{CellRef, Errors, MainManifest, ProjectManifest, ProjectRef, Snapshots};
 
-static GLOBAL_ROOT: OnceLock<PathBuf> = OnceLock::new();
-
-pub fn init_root(from: Option<&Path>) -> Result<(), Errors> {
-    let path = if let Some(p) = from {
-        make_absolute(p)?
-    } else {
-        denali_root()
-    };
-
-    GLOBAL_ROOT.set(path).map_err(|_| Errors::InternalError)?;
-    Ok(())
-}
-
-pub fn global_root() -> Result<&'static PathBuf, Errors> {
-    GLOBAL_ROOT.get().ok_or(Errors::InternalError)
-}
-
-pub fn make_absolute(path: &Path) -> Result<PathBuf, Errors> {
-    if path.is_absolute() {
-        Ok(path.to_path_buf())
-    } else {
-        Ok(env::current_dir()?.join(path).canonicalize()?)
-    }
-}
-
-pub fn list(name: String, from: Option<&Path>) -> Result<(), Errors> {
-    init_root(from)?;
+pub fn list(ctx: &AppContext, name: String) -> Result<(), Errors> {
     let (cell, project_name) = parse_name(&name)?;
-    let manifest = load_main_manifest()?;
+    let manifest = load_main_manifest(ctx)?;
     if project_name == "all" && cell.is_none() {
-        return print_all_projects(&manifest);
+        return print_all_projects(ctx, &manifest);
     }
     let proj_ref = manifest
         .projects
         .get(&project_name)
         .ok_or(Errors::InternalError)?;
-    let proj_manifest = load_project_manifest(proj_ref)?;
+    let proj_manifest = load_project_manifest(ctx, proj_ref)?;
     if let Some(cell_name) = cell {
         let cell_ref = proj_manifest
             .cells
@@ -166,17 +137,17 @@ fn parse_name(name: &str) -> Result<(Option<String>, String), Errors> {
     }
 }
 
-fn load_main_manifest() -> Result<MainManifest, Errors> {
-    let path = global_root()?.join("manifest.json");
+fn load_main_manifest(ctx: &AppContext) -> Result<MainManifest, Errors> {
+    let path = ctx.main_manifest_path();
     let data = fs::read(path)?;
     Ok(serde_json::from_slice(&data)?)
 }
 
-fn load_project_manifest(proj_ref: &ProjectRef) -> Result<ProjectManifest, Errors> {
-    let path = global_root()?
-        .join("snapshots")
-        .join("projects")
-        .join(format!("{}.json", proj_ref.manifest));
+fn load_project_manifest(
+    ctx: &AppContext,
+    proj_ref: &ProjectRef,
+) -> Result<ProjectManifest, Errors> {
+    let path = ctx.project_manifest_path(proj_ref.manifest.clone());
     let data = fs::read(path)?;
     Ok(serde_json::from_slice(&data)?)
 }
@@ -196,12 +167,12 @@ fn format_timestamp(ts: &str) -> String {
     ts.split('.').next().unwrap_or(ts).to_string()
 }
 
-fn print_all_projects(manifest: &MainManifest) -> Result<(), Errors> {
+fn print_all_projects(ctx: &AppContext, manifest: &MainManifest) -> Result<(), Errors> {
     let mut projects: Vec<_> = manifest.projects.iter().collect();
     projects.sort_by_key(|(name, _)| *name);
 
     for (i, (name, proj_ref)) in projects.into_iter().enumerate() {
-        let proj_manifest = load_project_manifest(proj_ref)?;
+        let proj_manifest = load_project_manifest(ctx, proj_ref)?;
         print_project_tree(name, proj_ref, &proj_manifest)?;
         if i + 1 < manifest.projects.len() {
             println!();

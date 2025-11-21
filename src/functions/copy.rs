@@ -8,11 +8,10 @@ use std::{
 use zstd::Decoder;
 
 use crate::utils::{
-    CellRef, Errors, MainManifest, ProjectManifest, ProjectRef, Snapshot, denali_root,
-    root_dir::make_root_dir,
+    CellRef, Errors, MainManifest, ProjectManifest, ProjectRef, Snapshot, context::AppContext,
 };
 
-pub fn copy(project: String, path: Option<&Path>) -> Result<(), Errors> {
+pub fn copy(ctx: &AppContext, project: String, path: Option<&Path>) -> Result<(), Errors> {
     let mut copied: HashSet<String> = HashSet::new();
 
     let mut parts = project.split('@');
@@ -36,27 +35,24 @@ pub fn copy(project: String, path: Option<&Path>) -> Result<(), Errors> {
         return Err(Errors::NotADir(dir));
     }
 
-    let main_root = denali_root();
-    let manifest_path = main_root.join("manifest.json");
+    let manifest_path = ctx.main_manifest_path();
     let manifest_data = fs::read(&manifest_path)?;
     let mut manifest: MainManifest = serde_json::from_slice(&manifest_data)?;
 
-    make_root_dir(dir.join(".denali"))?;
+    ctx.make_root_dir()?;
     let root = &dir.join(".denali");
 
     if cell == None && project_name == "all" {
         for (_, project_ref) in &manifest.projects {
             let uuid = project_ref.manifest.clone();
-            let project_manifest_path = denali_root()
-                .join("snapshots")
-                .join("projects")
-                .join(format!("{}.json", uuid));
+            let project_manifest_path = ctx.project_manifest_path(uuid.clone());
             let project_manifest_data = fs::read(project_manifest_path)?;
             let project_manifest: ProjectManifest = serde_json::from_slice(&project_manifest_data)?;
 
             for (_, snapshot) in &project_manifest.snapshots {
                 copy_tree(
-                    copy_snapshot(snapshot.hash.clone(), root)?,
+                    ctx,
+                    copy_snapshot(ctx, snapshot.hash.clone(), root)?,
                     root,
                     &mut copied,
                 )?;
@@ -70,13 +66,14 @@ pub fn copy(project: String, path: Option<&Path>) -> Result<(), Errors> {
                     .snapshots
                 {
                     copy_tree(
-                        copy_snapshot(snapshot.hash.clone(), root)?,
+                        ctx,
+                        copy_snapshot(ctx, snapshot.hash.clone(), root)?,
                         root,
                         &mut copied,
                     )?;
                 }
             }
-            copy_project_manifest(uuid, root)?;
+            copy_project_manifest(&ctx.project_manifest_path(uuid.clone()), uuid, root)?;
         }
         write_main_manifest(&manifest, root)?;
         return Ok(());
@@ -86,10 +83,7 @@ pub fn copy(project: String, path: Option<&Path>) -> Result<(), Errors> {
             .remove(&project_name)
             .ok_or(Errors::ProjectNotFound(project_name.clone()))?;
         let uuid = proj_in_main.manifest.clone();
-        let project_manifest_path = denali_root()
-            .join("snapshots")
-            .join("projects")
-            .join(format!("{}.json", uuid));
+        let project_manifest_path = ctx.project_manifest_path(uuid.clone());
         let project_manifest_data = fs::read(project_manifest_path)?;
         let project_manifest: ProjectManifest = serde_json::from_slice(&project_manifest_data)?;
         let mut manifest_obj: MainManifest = MainManifest {
@@ -99,7 +93,8 @@ pub fn copy(project: String, path: Option<&Path>) -> Result<(), Errors> {
 
         for (_, snapshot) in &project_manifest.snapshots {
             copy_tree(
-                copy_snapshot(snapshot.hash.clone(), root)?,
+                ctx,
+                copy_snapshot(ctx, snapshot.hash.clone(), root)?,
                 root,
                 &mut copied,
             )?;
@@ -113,14 +108,15 @@ pub fn copy(project: String, path: Option<&Path>) -> Result<(), Errors> {
                 .snapshots
             {
                 copy_tree(
-                    copy_snapshot(snapshot.hash.clone(), root)?,
+                    ctx,
+                    copy_snapshot(ctx, snapshot.hash.clone(), root)?,
                     root,
                     &mut copied,
                 )?;
             }
         }
         manifest_obj.projects.insert(project_name, proj_in_main);
-        copy_project_manifest(uuid, root)?;
+        copy_project_manifest(&ctx.project_manifest_path(uuid.clone()), uuid, root)?;
         write_main_manifest(&manifest_obj, root)?;
         return Ok(());
     }
@@ -131,10 +127,7 @@ pub fn copy(project: String, path: Option<&Path>) -> Result<(), Errors> {
         .remove(&project_name)
         .ok_or(Errors::ProjectNotFound(project_name.clone()))?;
     let uuid = proj_ref.manifest.clone();
-    let project_manifest_path = denali_root()
-        .join("snapshots")
-        .join("projects")
-        .join(format!("{}.json", uuid));
+    let project_manifest_path = ctx.project_manifest_path(uuid.clone());
     let project_manifest_data = fs::read(project_manifest_path)?;
     let mut project_manifest: ProjectManifest = serde_json::from_slice(&project_manifest_data)?;
 
@@ -176,7 +169,8 @@ pub fn copy(project: String, path: Option<&Path>) -> Result<(), Errors> {
         .snapshots
     {
         copy_tree(
-            copy_snapshot(snapshot.hash.clone(), root)?,
+            ctx,
+            copy_snapshot(ctx, snapshot.hash.clone(), root)?,
             root,
             &mut copied,
         )?;
@@ -188,13 +182,17 @@ pub fn copy(project: String, path: Option<&Path>) -> Result<(), Errors> {
     Ok(())
 }
 
-fn copy_tree(hash: String, path: &Path, copied: &mut HashSet<String>) -> Result<(), Errors> {
+fn copy_tree(
+    ctx: &AppContext,
+    hash: String,
+    path: &Path,
+    copied: &mut HashSet<String>,
+) -> Result<(), Errors> {
     let dir = &hash[..3];
     let filename = &hash[3..];
 
-    let file_path = Path::new("objects").join(dir).join(filename);
-    let root = denali_root().join(file_path.clone());
-    let mut file = fs::File::open(root)?;
+    let file_path = ctx.objects_path().join(dir).join(filename);
+    let mut file = fs::File::open(file_path)?;
     let mut blob_comp = Vec::new();
     file.read_to_end(&mut blob_comp)?;
 
@@ -212,21 +210,22 @@ fn copy_tree(hash: String, path: &Path, copied: &mut HashSet<String>) -> Result<
         }
         copied.insert(hex::encode(entry.hash));
         if entry.mode == "10" {
-            copy_tree(hex::encode(entry.hash), path, copied)?;
+            copy_tree(ctx, hex::encode(entry.hash), path, copied)?;
         } else {
-            copy_object(hex::encode(entry.hash), path)?;
+            copy_object(ctx, hex::encode(entry.hash), path)?;
         }
     }
 
-    copy_object(hash, path)?;
+    copy_object(ctx, hash, path)?;
 
     Ok(())
 }
-fn copy_object(hash: String, path: &Path) -> Result<(), Errors> {
+
+fn copy_object(ctx: &AppContext, hash: String, path: &Path) -> Result<(), Errors> {
     let dir = &hash[..3];
     let filename = &hash[3..];
 
-    let root = denali_root().join("objects").join(dir).join(filename);
+    let root = ctx.objects_path().join(dir).join(filename);
     let mut file = fs::File::open(root)?;
     let mut blob_comp = Vec::new();
     file.read_to_end(&mut blob_comp)?;
@@ -242,15 +241,11 @@ fn copy_object(hash: String, path: &Path) -> Result<(), Errors> {
     Ok(())
 }
 
-fn copy_snapshot(hash: String, path: &Path) -> Result<String, Errors> {
+fn copy_snapshot(ctx: &AppContext, hash: String, path: &Path) -> Result<String, Errors> {
     let dir = &hash[..3];
     let filename = &hash[3..];
 
-    let root = denali_root()
-        .join("snapshots")
-        .join("meta")
-        .join(dir)
-        .join(filename);
+    let root = ctx.snapshots_path().join(dir).join(filename);
 
     let mut file = fs::File::open(root)?;
     let mut blob_comp = Vec::new();
@@ -270,12 +265,8 @@ fn copy_snapshot(hash: String, path: &Path) -> Result<String, Errors> {
     Ok(snapshot.root)
 }
 
-fn copy_project_manifest(uuid: String, path: &Path) -> Result<(), Errors> {
-    let project_manifest_path = denali_root()
-        .join("snapshots")
-        .join("projects")
-        .join(format!("{}.json", uuid));
-    let project_manifest_data = fs::read(project_manifest_path)?;
+fn copy_project_manifest(manifest: &Path, uuid: String, path: &Path) -> Result<(), Errors> {
+    let project_manifest_data = fs::read(manifest)?;
 
     let file = path
         .join("snapshots")

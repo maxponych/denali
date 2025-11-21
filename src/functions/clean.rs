@@ -1,28 +1,26 @@
-use std::{collections::HashSet, fs, io::Read};
+use std::{collections::HashSet, fs, io::Read, path::Path};
 
 use zstd::Decoder;
 
-use crate::utils::{Errors, MainManifest, ProjectManifest, Snapshot, denali_root};
+use crate::utils::{Errors, MainManifest, ProjectManifest, Snapshot, context::AppContext};
 
-pub fn clean(is_dry: bool) -> Result<(), Errors> {
+pub fn clean(ctx: &AppContext, is_dry: bool) -> Result<(), Errors> {
     let mut objects = HashSet::new();
     let mut snapshots: HashSet<String> = HashSet::new();
-    mark_entries(&mut snapshots, &mut objects)?;
+    mark_entries(ctx, &mut snapshots, &mut objects)?;
     if is_dry {
         println!("The next entries are going to be deleted");
         for entry in snapshots {
             println!("{}", entry);
         }
     } else {
-        delete_snapshots(&snapshots)?;
-        delete_objects(&objects)?;
+        delete_snapshots(&ctx.root, &snapshots)?;
+        delete_objects(&ctx.root, &objects)?;
     }
     Ok(())
 }
 
-fn delete_objects(objects: &HashSet<String>) -> Result<(), Errors> {
-    let path = denali_root().join("objects");
-
+fn delete_objects(path: &Path, objects: &HashSet<String>) -> Result<(), Errors> {
     for dir_entry in fs::read_dir(&path)? {
         let dir_entry = dir_entry?;
         if !dir_entry.file_type()?.is_dir() {
@@ -48,9 +46,7 @@ fn delete_objects(objects: &HashSet<String>) -> Result<(), Errors> {
     Ok(())
 }
 
-fn delete_snapshots(snapshots: &HashSet<String>) -> Result<(), Errors> {
-    let path = denali_root().join("snapshots").join("meta");
-
+fn delete_snapshots(path: &Path, snapshots: &HashSet<String>) -> Result<(), Errors> {
     for dir_entry in fs::read_dir(&path)? {
         let dir_entry = dir_entry?;
         if !dir_entry.file_type()?.is_dir() {
@@ -77,13 +73,15 @@ fn delete_snapshots(snapshots: &HashSet<String>) -> Result<(), Errors> {
 }
 
 fn mark_entries(
+    ctx: &AppContext,
     snapshots: &mut HashSet<String>,
     objects: &mut HashSet<String>,
 ) -> Result<(), Errors> {
     let mut good_entries: HashSet<String> = HashSet::new();
-    let manifest = load_manifest()?;
+    let manifest = load_manifest(&ctx.main_manifest_path())?;
     for (_, project_ref) in &manifest.projects {
-        let project_manifest = load_project_manifest(project_ref.manifest.clone())?;
+        let project_manifest =
+            load_project_manifest(&ctx.project_manifest_path(project_ref.manifest.clone()))?;
         for (_, snapshot) in &project_manifest.snapshots {
             good_entries.insert(snapshot.hash.clone());
         }
@@ -94,17 +92,18 @@ fn mark_entries(
         }
     }
 
-    mark_orphans(snapshots, objects, &good_entries)?;
+    mark_orphans(ctx, snapshots, objects, &good_entries)?;
 
     Ok(())
 }
 
 fn mark_orphans(
+    ctx: &AppContext,
     snapshots: &mut HashSet<String>,
     objects: &mut HashSet<String>,
     good_entries: &HashSet<String>,
 ) -> Result<(), Errors> {
-    let path = denali_root().join("snapshots").join("meta");
+    let path = ctx.snapshots_path();
     for entry in fs::read_dir(path)? {
         let dir = entry?;
         for file in fs::read_dir(dir.path())? {
@@ -117,20 +116,21 @@ fn mark_orphans(
         }
     }
     for snapshot in good_entries.iter() {
-        let snap = read_snapshot(snapshot.to_string())?;
-        mark_objects(&snap.root, objects, &snapshots)?;
+        let snap = read_snapshot(ctx, snapshot.to_string())?;
+        mark_objects(ctx, &snap.root, objects, &snapshots)?;
     }
     Ok(())
 }
 
 fn mark_objects(
+    ctx: &AppContext,
     hash: &str,
     good_entries: &mut HashSet<String>,
     bad_snapshots: &HashSet<String>,
 ) -> Result<(), Errors> {
     let dir = &hash[..3];
     let file = &hash[3..];
-    let path = denali_root().join("objects").join(dir).join(file);
+    let path = ctx.objects_path().join(dir).join(file);
     if !path.exists() {
         return Ok(());
     }
@@ -152,12 +152,12 @@ fn mark_objects(
         if entry.mode == "20" {
             good_entries.insert(hex::encode(entry.hash));
         } else if entry.mode == "30" {
-            let snap = read_snapshot(hex::encode(entry.hash))?;
+            let snap = read_snapshot(ctx, hex::encode(entry.hash))?;
             if !bad_snapshots.contains(&snap.root) {
-                mark_objects(&snap.root, good_entries, bad_snapshots)?;
+                mark_objects(ctx, &snap.root, good_entries, bad_snapshots)?;
             }
         } else {
-            mark_objects(&hex::encode(entry.hash), good_entries, bad_snapshots)?;
+            mark_objects(ctx, &hex::encode(entry.hash), good_entries, bad_snapshots)?;
         }
     }
     Ok(())
@@ -197,15 +197,11 @@ fn parse_tree(tree: &Vec<u8>) -> Result<Vec<TreeStruct>, Errors> {
     Ok(entries)
 }
 
-fn read_snapshot(hash: String) -> Result<Snapshot, Errors> {
+fn read_snapshot(ctx: &AppContext, hash: String) -> Result<Snapshot, Errors> {
     let dir = &hash[..3];
     let filename = &hash[3..];
 
-    let meta_path = denali_root()
-        .join("snapshots")
-        .join("meta")
-        .join(dir)
-        .join(filename);
+    let meta_path = ctx.snapshots_path().join(dir).join(filename);
     let meta_data_cmp = fs::read(meta_path)?;
     let mut meta_data = Vec::new();
     {
@@ -218,17 +214,13 @@ fn read_snapshot(hash: String) -> Result<Snapshot, Errors> {
     Ok(meta)
 }
 
-fn load_project_manifest(uuid: String) -> Result<ProjectManifest, Errors> {
-    let path = denali_root()
-        .join("snapshots")
-        .join("projects")
-        .join(format!("{}.json", uuid));
+fn load_project_manifest(path: &Path) -> Result<ProjectManifest, Errors> {
     let data = fs::read(path)?;
     let manifest = serde_json::from_slice(&data)?;
     Ok(manifest)
 }
-fn load_manifest() -> Result<MainManifest, Errors> {
-    let path = denali_root().join("manifest.json");
+
+fn load_manifest(path: &Path) -> Result<MainManifest, Errors> {
     let manifest_data = fs::read(path)?;
     let manifest = serde_json::from_slice(&manifest_data)?;
     Ok(manifest)

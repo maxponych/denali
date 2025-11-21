@@ -3,7 +3,6 @@ use std::{
     env, fs,
     io::Read,
     path::{Path, PathBuf},
-    sync::OnceLock,
     time::SystemTime,
 };
 
@@ -13,7 +12,7 @@ use chrono::{
 use zstd::Decoder;
 
 use crate::utils::{
-    DenaliToml, Errors, MainManifest, ProjectConfig, ProjectManifest, Snapshot, denali_root,
+    DenaliToml, Errors, MainManifest, ProjectConfig, ProjectManifest, Snapshot, context::AppContext,
 };
 
 #[derive(Debug)]
@@ -138,39 +137,14 @@ fn build_filter(
     Ok(Filter::new(before, after, cli_name))
 }
 
-static GLOBAL_ROOT: OnceLock<PathBuf> = OnceLock::new();
-
-pub fn init_root(from: Option<&Path>) -> Result<(), Errors> {
-    let path = if let Some(p) = from {
-        make_absolute(p)?
-    } else {
-        denali_root()
-    };
-
-    GLOBAL_ROOT.set(path).map_err(|_| Errors::InternalError)?;
-    Ok(())
-}
-
-pub fn global_root() -> Result<&'static PathBuf, Errors> {
-    GLOBAL_ROOT.get().ok_or(Errors::InternalError)
-}
-
-pub fn make_absolute(path: &Path) -> Result<PathBuf, Errors> {
-    if path.is_absolute() {
-        Ok(path.to_path_buf())
-    } else {
-        Ok(env::current_dir()?.join(path).canonicalize()?)
-    }
-}
-
 pub fn load(
+    ctx: &AppContext,
     project: String,
     name: Option<String>,
     path: Option<&Path>,
     before: Option<String>,
     after: Option<String>,
     with_config: bool,
-    from: Option<&Path>,
 ) -> Result<(), Errors> {
     let mut parts = project.split('@');
     let cell = parts.next().map(|s| s.to_string());
@@ -182,10 +156,7 @@ pub fn load(
         _ => return Err(Errors::InvalidNameFormat(project)),
     };
 
-    init_root(from)?;
-
-    let root = global_root()?;
-    let manifest_path = root.join("manifest.json");
+    let manifest_path = ctx.main_manifest_path();
     let manifest_data = fs::read(&manifest_path)?;
     let manifest: MainManifest = serde_json::from_slice(&manifest_data)?;
 
@@ -200,10 +171,7 @@ pub fn load(
         }
     }
 
-    let project_manifest_path = global_root()?
-        .join("snapshots")
-        .join("projects")
-        .join(format!("{}.json", proj.manifest.clone()));
+    let project_manifest_path = ctx.project_manifest_path(proj.manifest.clone());
     let project_manifest_data = fs::read(project_manifest_path)?;
     let project_manifest: ProjectManifest = serde_json::from_slice(&project_manifest_data)?;
 
@@ -301,7 +269,7 @@ pub fn load(
             }
         }
 
-        load_project(&project_manifest, &filter, &locks, path, with_config)?;
+        load_project(ctx, &project_manifest, &filter, &locks, path, with_config)?;
         return Ok(());
     }
 
@@ -372,12 +340,13 @@ pub fn load(
         },
     )?;
 
-    load_cell(&project_manifest, &filter, cell_name.to_string(), path)?;
+    load_cell(ctx, &project_manifest, &filter, cell_name.to_string(), path)?;
 
     Ok(())
 }
 
 fn load_cell(
+    ctx: &AppContext,
     manifest: &ProjectManifest,
     filter: &Filter,
     cell: String,
@@ -414,11 +383,7 @@ fn load_cell(
 
     let meta_dir = &snap_meta[..3];
     let meta_file = &snap_meta[3..];
-    let meta_path = global_root()?
-        .join("snapshots")
-        .join("meta")
-        .join(meta_dir)
-        .join(meta_file);
+    let meta_path = ctx.snapshots_path().join(meta_dir).join(meta_file);
     let meta_data_cmp = fs::read(meta_path)?;
     let mut meta_data = Vec::new();
     {
@@ -428,12 +393,13 @@ fn load_cell(
 
     let meta: Snapshot = serde_json::from_slice(&meta_data)?;
 
-    restore_cell(meta.root, dest, manifest, cell)?;
+    restore_cell(ctx, meta.root, dest, manifest, cell)?;
 
     Ok(())
 }
 
 fn load_project(
+    ctx: &AppContext,
     manifest: &ProjectManifest,
     filter: &Filter,
     locks: &HashMap<String, Filter>,
@@ -466,11 +432,7 @@ fn load_project(
 
     let meta_dir = &snap_meta[..3];
     let meta_file = &snap_meta[3..];
-    let meta_path = global_root()?
-        .join("snapshots")
-        .join("meta")
-        .join(meta_dir)
-        .join(meta_file);
+    let meta_path = ctx.snapshots_path().join(meta_dir).join(meta_file);
 
     let meta_data_cmp = fs::read(meta_path)?;
     let mut meta_data = Vec::new();
@@ -492,7 +454,7 @@ fn load_project(
         return Err(Errors::NotADir(destination));
     }
 
-    restore(meta.root, &destination, with_config)?;
+    restore(ctx, meta.root, &destination, with_config)?;
 
     for (cell, lock) in locks {
         let cell_path = destination.join(cell);
@@ -501,6 +463,7 @@ fn load_project(
         }
 
         load_cell(
+            ctx,
             manifest,
             lock,
             cell.to_string(),
@@ -516,11 +479,16 @@ struct TreeStruct {
     hash: [u8; 32],
 }
 
-fn restore_file(hash: String, dest: &Path, with_config: bool) -> Result<(), Errors> {
+fn restore_file(
+    ctx: &AppContext,
+    hash: String,
+    dest: &Path,
+    with_config: bool,
+) -> Result<(), Errors> {
     let dir = &hash[..3];
     let filename = &hash[3..];
 
-    let path = global_root()?.join("objects").join(dir).join(filename);
+    let path = ctx.objects_path().join(dir).join(filename);
     if !path.exists() {
         return Ok(());
     }
@@ -589,6 +557,7 @@ fn parse_tree(tree: &Vec<u8>) -> Result<Vec<TreeStruct>, Errors> {
 }
 
 fn restore_cell(
+    ctx: &AppContext,
     hash: String,
     dest: Option<&Path>,
     manifest: &ProjectManifest,
@@ -597,7 +566,7 @@ fn restore_cell(
     let dir = &hash[..3];
     let filename = &hash[3..];
 
-    let path = global_root()?.join("objects").join(dir).join(filename);
+    let path = ctx.objects_path().join(dir).join(filename);
     if !path.exists() {
         return Ok(());
     }
@@ -637,20 +606,20 @@ fn restore_cell(
             if !target.exists() {
                 fs::create_dir(&target)?;
             }
-            restore(hex::encode(entry.hash), &target, true)?;
+            restore(ctx, hex::encode(entry.hash), &target, true)?;
         } else {
-            restore_file(hex::encode(entry.hash), &target, true)?;
+            restore_file(ctx, hex::encode(entry.hash), &target, true)?;
         }
     }
 
     Ok(())
 }
 
-fn restore(hash: String, dest: &Path, with_config: bool) -> Result<(), Errors> {
+fn restore(ctx: &AppContext, hash: String, dest: &Path, with_config: bool) -> Result<(), Errors> {
     let dir = &hash[..3];
     let filename = &hash[3..];
 
-    let path = global_root()?.join("objects").join(dir).join(filename);
+    let path = ctx.objects_path().join(dir).join(filename);
     if !path.exists() {
         return Ok(());
     }
@@ -673,11 +642,11 @@ fn restore(hash: String, dest: &Path, with_config: bool) -> Result<(), Errors> {
             if !target.exists() {
                 fs::create_dir(&target)?;
             }
-            restore(hex::encode(entry.hash), &target, with_config)?;
+            restore(ctx, hex::encode(entry.hash), &target, with_config)?;
         } else if entry.mode == "30" {
             continue;
         } else {
-            restore_file(hex::encode(entry.hash), &target, with_config)?;
+            restore_file(ctx, hex::encode(entry.hash), &target, with_config)?;
         }
     }
 
