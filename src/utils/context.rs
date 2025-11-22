@@ -47,6 +47,10 @@ impl AppContext {
             .join(format!("{}.json", uuid))
     }
 
+    pub fn templates_path(&self) -> PathBuf {
+        self.root.join("templates")
+    }
+
     pub fn snapshots_path(&self) -> PathBuf {
         self.root.join("snapshots").join("meta")
     }
@@ -65,6 +69,7 @@ impl AppContext {
         fs::create_dir_all(path.join("objects"))?;
         fs::create_dir_all(path.join("snapshots").join("meta"))?;
         fs::create_dir_all(path.join("snapshots").join("projects"))?;
+        fs::create_dir_all(path.join("templates"))?;
         let manifest_file = path.join("manifest.json");
         if !manifest_file.exists() {
             let manifest_obj: MainManifest = MainManifest {

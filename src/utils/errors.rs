@@ -4,6 +4,15 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum Errors {
+    #[error("Command failed \"{0}\"")]
+    CommandFailed(String),
+
+    #[error("Template with the name \"{0}\" does not exist")]
+    TemplateDoesntExist(String),
+
+    #[error("Template with the name \"{0}\" already exists")]
+    TemplateExists(String),
+
     #[error("Path is already initialised")]
     AlreadyInitialised,
 
@@ -33,9 +42,6 @@ pub enum Errors {
 
     #[error("Date is too large")]
     TooBigDate,
-
-    #[error("Snapshot \"{0}\" does not exist")]
-    NoSuchSnapshot(String),
 
     #[error("Snapshot \"{0}\" already exists")]
     SnapshotExists(String),

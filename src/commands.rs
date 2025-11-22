@@ -74,11 +74,20 @@ pub enum TmplCommand {
         name: String,
         #[arg(long, short)]
         path: Option<PathBuf>,
+        #[arg(long, short)]
+        dry: bool,
+        #[arg(long = "with_config", short = 'c')]
+        with_config: bool,
     },
     New {
         name: String,
         #[arg(long, short)]
         path: Option<PathBuf>,
+        #[arg(long = "override", short = 'o')]
+        over: bool,
     },
     List,
+    Remove {
+        name: String,
+    },
 }

@@ -64,12 +64,25 @@ List projects, cells, or snapshots (use `all` to list everything).
 ### `denali remove <name> [snapshot_name] [--all]`
 Remove snapshot and project/cell from the manifests.
 Use `--all` only when deleting a snapshot from a project to remove it from all cells.
+In order to clean up you still need to call `denali clean`
 
 ### `denali clean [--dry]`
 Clean detached objects. `--dry` is going to return hashes of snapshots metadata that is going to be removed.
 
 ### `denali check [-p <path>]`
 Compare config file with manifests. `-p` must point to the directory containing the `denali.toml` file.
+
+### `denali tmpl new <name> [-p <path> --override]`
+Create a template. Use override in case you want to change the existing one.
+
+### `denali tmpl apply <name> [-p <path> --dry --with_config]`
+Load a template. Load the structure of template and any commands provided. `--dry` is in case you don't want to execute commands for that template, but structure will be restored. 
+
+### `denali tmpl list`
+List templates
+
+### `denali tmpl remove <name>`
+Remove template from manifests. In order to clean up you still need to call `denali clean`
 
 ## Config file -  `.denali.toml`
 The config file will be generated on project initialisation inside the project root. In this file you can specify ignore, filters, locks, name, description, path. Config will not affect load if load is called with `--path` argument.
@@ -119,20 +132,33 @@ Ignore rules for your project. *Note that cell ignore rules are relative to cell
 ### `snapshot_before/after = "<date>"`
 Filter for snapshots. `load` will load newest within specified constrains.
 
+## Templates
+Templates are your ready to use development environment setup. Directory tree and any commands you need to run.
+The objects of you template are saved in the same store `.denali/objects`, the same store that is used for projects/cells objects.
+To create template create a structure you want to use first. Inside the root directory you can create a config file with the name `.denali.tmpl.toml`. \
+Example:
+```toml
+placeholders = ["path", "greetings"]
+commands = ["cat <{path}>", "echo <{greetings}>", "npm i", "docker run something"]
+```
+Inside this config file you can add commands that will be executed on `denali tmpl apply`, after the structure was restored. You can also use placeholders for your commands. On apply you will be prompted to provide values for each placeholder. To use placeholder value in commands use `<{}>` wrapper. *Important: without any spaces*. \
+If you later wish to change list of commands or placeholder, the config file is copied to the `.denali` store. So you can acces `.denali/templates/{template_name}.toml`, change it however you want.
+Only `commands` and `placeholders` are supported for template configs at the moment.
+
 ## Current Limitations
 
 - Local storage only (remote sync planned)
 - No symlink support yet
 - File permissions not preserved
-- Missing: cleanup commands, diff, merge strategies
+- Missing: diff, merge strategies
 
 ## Roadmap
 
 - [x] `check` command (manifest synchronisation with config file)
-- [ ] Templates
+- [x] Templates
 - [ ] Remote sync (push/pull)
 - [ ] Diff command
-- [ ] Snapshot cleanup/pruning
+- [x] Snapshot cleanup/pruning
 - [ ] Merge strategies
 
 ## Contributing

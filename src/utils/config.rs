@@ -37,3 +37,11 @@ pub struct DenaliToml {
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub cells: HashMap<String, CellConfig>,
 }
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct TmplToml {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub placeholders: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub commands: Vec<String>,
+}

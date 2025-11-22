@@ -8,10 +8,11 @@ pub fn clean(ctx: &AppContext, is_dry: bool) -> Result<(), Errors> {
     let mut objects = HashSet::new();
     let mut snapshots: HashSet<String> = HashSet::new();
     mark_entries(ctx, &mut snapshots, &mut objects)?;
+    mark_templates(ctx, &mut snapshots, &mut objects)?;
     if is_dry {
         println!("The next entries are going to be deleted");
         for entry in snapshots {
-            println!("{}", entry);
+            println!("snapshot: {}", entry);
         }
     } else {
         delete_snapshots(&ctx.snapshots_path(), &snapshots)?;
@@ -43,6 +44,20 @@ fn delete_objects(path: &Path, objects: &HashSet<String>) -> Result<(), Errors> 
             fs::remove_dir(dir_entry.path())?;
         }
     }
+    Ok(())
+}
+
+fn mark_templates(
+    ctx: &AppContext,
+    snapshots: &mut HashSet<String>,
+    objects: &mut HashSet<String>,
+) -> Result<(), Errors> {
+    let manifest = ctx.load_main_manifest()?;
+
+    for (_, tmpl_ref) in manifest.templates {
+        mark_objects(ctx, &tmpl_ref.tree, snapshots, objects)?;
+    }
+
     Ok(())
 }
 

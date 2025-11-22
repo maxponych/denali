@@ -12,7 +12,7 @@ use chrono::{
 use zstd::Decoder;
 
 use crate::utils::{
-    DenaliToml, Errors, MainManifest, ProjectConfig, ProjectManifest, ProjectRef, Snapshot, config,
+    DenaliToml, Errors, MainManifest, ProjectConfig, ProjectManifest, ProjectRef, Snapshot,
     context::AppContext, parse_name,
 };
 
@@ -639,22 +639,7 @@ fn restore_cell(
     manifest: &ProjectManifest,
     name: String,
 ) -> Result<(), Errors> {
-    let dir = &hash[..3];
-    let filename = &hash[3..];
-
-    let path = ctx.objects_path().join(dir).join(filename);
-    if !path.exists() {
-        return Ok(());
-    }
-    let mut file = fs::File::open(path)?;
-    let mut tree_cmp = Vec::new();
-    file.read_to_end(&mut tree_cmp)?;
-
-    let mut tree = Vec::new();
-    {
-        let mut decoder = Decoder::new(&tree_cmp[..])?;
-        decoder.read_to_end(&mut tree)?;
-    }
+    let tree = ctx.load_object(hash)?;
     let entries = parse_tree(&tree)?;
 
     let destination = match dest {

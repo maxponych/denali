@@ -1,5 +1,6 @@
 mod commands;
 mod functions;
+mod templates;
 mod utils;
 
 use clap::Parser;
@@ -8,6 +9,7 @@ use utils::{context::AppContext, *};
 
 use colored::*;
 use functions::*;
+use templates::*;
 
 fn main() {
     if let Err(e) = run() {
@@ -54,9 +56,15 @@ fn run() -> Result<(), Errors> {
         Commands::Remove { project, name, all } => remove(&ctx, project, name, all)?,
         Commands::Clean { dry } => clean(&ctx, dry)?,
         Commands::Tmpl { sub } => match sub {
-            TmplCommand::New { name, path } => None.unwrap(),
-            TmplCommand::Apply { name, path } => None.unwrap(),
-            TmplCommand::List => None.unwrap(),
+            TmplCommand::New { name, path, over } => tmpl_new(&ctx, name, path.as_deref(), over)?,
+            TmplCommand::Apply {
+                name,
+                path,
+                dry,
+                with_config,
+            } => tmpl_apply(&ctx, name, path.as_deref(), dry, with_config)?,
+            TmplCommand::List => tmpl_list(&ctx)?,
+            TmplCommand::Remove { name } => tmpl_remove(&ctx, name)?,
         },
     }
     Ok(())

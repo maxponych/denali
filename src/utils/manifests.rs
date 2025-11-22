@@ -11,7 +11,13 @@ pub struct Snapshots {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct MainManifest {
     pub projects: HashMap<String, ProjectRef>,
-    pub templates: HashMap<String, String>,
+    pub templates: HashMap<String, TemplateRef>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct TemplateRef {
+    pub tree: String,
+    pub config: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
