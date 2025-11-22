@@ -25,11 +25,17 @@ pub enum Errors {
     #[error("Project with the name \"{0}\" does not exist")]
     ProjectNotFound(String),
 
+    #[error("Cell with the name \"{0}\" does not exist")]
+    CellNotFound(String),
+
     #[error("Invalid name format: {0}")]
     InvalidNameFormat(String),
 
     #[error("Date is too large")]
     TooBigDate,
+
+    #[error("Snapshot \"{0}\" does not exist")]
+    NoSuchSnapshot(String),
 
     #[error("Snapshot \"{0}\" already exists")]
     SnapshotExists(String),

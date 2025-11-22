@@ -14,8 +14,8 @@ pub fn clean(ctx: &AppContext, is_dry: bool) -> Result<(), Errors> {
             println!("{}", entry);
         }
     } else {
-        delete_snapshots(&ctx.root, &snapshots)?;
-        delete_objects(&ctx.root, &objects)?;
+        delete_snapshots(&ctx.snapshots_path(), &snapshots)?;
+        delete_objects(&ctx.objects_path(), &objects)?;
     }
     Ok(())
 }
@@ -116,7 +116,7 @@ fn mark_orphans(
     }
     for snapshot in good_entries.iter() {
         let snap = ctx.load_snapshot(snapshot.to_string())?;
-        mark_objects(ctx, &snap.root, objects, &snapshots)?;
+        mark_objects(ctx, &snap.root, snapshots, objects)?;
     }
     Ok(())
 }
@@ -124,8 +124,8 @@ fn mark_orphans(
 fn mark_objects(
     ctx: &AppContext,
     hash: &str,
+    snapshots: &mut HashSet<String>,
     good_entries: &mut HashSet<String>,
-    bad_snapshots: &HashSet<String>,
 ) -> Result<(), Errors> {
     let dir = &hash[..3];
     let file = &hash[3..];
@@ -151,12 +151,11 @@ fn mark_objects(
         if entry.mode == "20" {
             good_entries.insert(hex::encode(entry.hash));
         } else if entry.mode == "30" {
+            snapshots.remove(&hex::encode(entry.hash));
             let snap = ctx.load_snapshot(hex::encode(entry.hash))?;
-            if !bad_snapshots.contains(&snap.root) {
-                mark_objects(ctx, &snap.root, good_entries, bad_snapshots)?;
-            }
+            mark_objects(ctx, &snap.root, snapshots, good_entries)?;
         } else {
-            mark_objects(ctx, &hex::encode(entry.hash), good_entries, bad_snapshots)?;
+            mark_objects(ctx, &hex::encode(entry.hash), snapshots, good_entries)?;
         }
     }
     Ok(())

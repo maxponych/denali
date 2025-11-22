@@ -37,6 +37,8 @@ pub enum Commands {
         after: Option<String>,
         #[arg(long = "with_config", short = 'c')]
         with_config: bool,
+        #[arg(long, short)]
+        wipe: bool,
     },
     Check {
         #[arg(long, short)]
@@ -44,6 +46,9 @@ pub enum Commands {
     },
     Remove {
         project: String,
+        name: Option<String>,
+        #[arg(long, short)]
+        all: bool,
     },
     Clean {
         #[arg(long, short)]

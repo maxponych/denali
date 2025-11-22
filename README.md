@@ -53,6 +53,7 @@ Restore a snapshot.
 - `-b <date>` / `--before <date>` - load newest before this time
 - `-a <date>` / `--after <date>` - load newest after this time
 - `-c` / `--with-config` - include .denali.toml config file
+- `-w` / `--wipe` - wipe the destination directory
 
 ### `denali copy <name> -p <path>`
 Export project/cell to specified directory (use `all` to copy everything).
@@ -60,13 +61,14 @@ Export project/cell to specified directory (use `all` to copy everything).
 ### `denali list <name>`
 List projects, cells, or snapshots (use `all` to list everything).
 
-### `denali remove <name>`
-Remove project/cell from manifests. *Deleting a cell will remove it from all snapshots; older snapshots won’t be able to restore it (this behavior will change in the future).*
+### `denali remove <name> [snapshot_name] [--all]`
+Remove snapshot and project/cell from the manifests.
+Use `--all` only when deleting a snapshot from a project to remove it from all cells.
 
 ### `denali clean [--dry]`
 Clean detached objects. `--dry` is going to return hashes of snapshots metadata that is going to be removed.
 
-### `denali check `
+### `denali check [-p <path>]`
 Compare config file with manifests. `-p` must point to the directory containing the `denali.toml` file.
 
 ## Config file -  `.denali.toml`

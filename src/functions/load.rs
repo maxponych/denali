@@ -12,7 +12,7 @@ use chrono::{
 use zstd::Decoder;
 
 use crate::utils::{
-    DenaliToml, Errors, MainManifest, ProjectConfig, ProjectManifest, ProjectRef, Snapshot,
+    DenaliToml, Errors, MainManifest, ProjectConfig, ProjectManifest, ProjectRef, Snapshot, config,
     context::AppContext, parse_name,
 };
 
@@ -138,6 +138,34 @@ fn build_filter(
     Ok(Filter::new(before, after, cli_name))
 }
 
+fn wipe_dir(path: &Path) -> Result<(), Errors> {
+    fs::remove_dir_all(path).ok();
+    fs::create_dir_all(path)?;
+    Ok(())
+}
+
+fn wipe_cell(ctx: &AppContext, uuid: String, name: String) -> Result<(), Errors> {
+    let manifest = ctx.load_project_manifest(uuid)?;
+    let cell = manifest
+        .cells
+        .get(&name)
+        .ok_or(Errors::CellNotFound(name))?;
+    wipe_dir(&Path::new(&cell.path))?;
+    Ok(())
+}
+
+fn wipe_project(ctx: &AppContext, uuid: String) -> Result<(), Errors> {
+    let manifest = ctx.load_project_manifest(uuid)?;
+    let config_path = Path::new(&manifest.source).join(".denali.toml");
+    let data = fs::read(config_path.clone())?;
+    wipe_dir(&Path::new(&manifest.source))?;
+    for (_, cell_ref) in &manifest.cells {
+        wipe_dir(&Path::new(&cell_ref.path))?;
+    }
+    fs::write(config_path, data)?;
+    Ok(())
+}
+
 pub fn load(
     ctx: &AppContext,
     project: String,
@@ -146,6 +174,7 @@ pub fn load(
     before: Option<String>,
     after: Option<String>,
     with_config: bool,
+    wipe: bool,
 ) -> Result<(), Errors> {
     let (project_name, cell_name) = parse_name(project.clone())?;
 
@@ -155,6 +184,23 @@ pub fn load(
         .projects
         .get(&project_name)
         .ok_or_else(|| Errors::NotInitialised(PathBuf::from(&project)))?;
+
+    if wipe {
+        if let Some(p) = path {
+            let config_path = Path::new(p).join(".denali.toml");
+            let data = fs::read(config_path.clone()).ok();
+            wipe_dir(p)?;
+            if let Some(d) = data {
+                fs::write(config_path, d)?;
+            }
+        } else {
+            if let Some(c) = cell_name.clone() {
+                wipe_cell(ctx, proj.manifest.clone(), c)?;
+            } else {
+                wipe_project(ctx, proj.manifest.clone())?;
+            }
+        }
+    }
 
     if let Some(cell) = &cell_name {
         if !proj.cells.contains(cell) {
@@ -499,7 +545,7 @@ fn load_project(
         return Err(Errors::NotADir(destination));
     }
 
-    restore(ctx, meta.root, &destination, with_config)?;
+    restore(ctx, meta.root, &destination, with_config, manifest)?;
 
     for (cell, lock) in locks {
         let cell_path = destination.join(cell);
@@ -636,7 +682,7 @@ fn restore_cell(
             if !target.exists() {
                 fs::create_dir(&target)?;
             }
-            restore(ctx, hex::encode(entry.hash), &target, true)?;
+            restore(ctx, hex::encode(entry.hash), &target, true, manifest)?;
         } else {
             restore_file(ctx, hex::encode(entry.hash), &target, true)?;
         }
@@ -645,7 +691,29 @@ fn restore_cell(
     Ok(())
 }
 
-fn restore(ctx: &AppContext, hash: String, dest: &Path, with_config: bool) -> Result<(), Errors> {
+fn maybe_restore_cell(
+    ctx: &AppContext,
+    hash: String,
+    path: &Path,
+    name: &str,
+    project: &ProjectManifest,
+) -> Result<(), Errors> {
+    if let Some(_) = project.cells.get(name) {
+        return Ok(());
+    } else {
+        let snapshot = ctx.load_snapshot(hash)?;
+        restore_cell(ctx, snapshot.root, Some(path), project, name.to_string())?;
+        return Ok(());
+    }
+}
+
+fn restore(
+    ctx: &AppContext,
+    hash: String,
+    dest: &Path,
+    with_config: bool,
+    project: &ProjectManifest,
+) -> Result<(), Errors> {
     let dir = &hash[..3];
     let filename = &hash[3..];
 
@@ -672,9 +740,9 @@ fn restore(ctx: &AppContext, hash: String, dest: &Path, with_config: bool) -> Re
             if !target.exists() {
                 fs::create_dir(&target)?;
             }
-            restore(ctx, hex::encode(entry.hash), &target, with_config)?;
+            restore(ctx, hex::encode(entry.hash), &target, with_config, project)?;
         } else if entry.mode == "30" {
-            continue;
+            maybe_restore_cell(ctx, hex::encode(entry.hash), &target, &entry.name, project)?;
         } else {
             restore_file(ctx, hex::encode(entry.hash), &target, with_config)?;
         }

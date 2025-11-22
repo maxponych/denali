@@ -37,6 +37,7 @@ fn run() -> Result<(), Errors> {
             before,
             after,
             with_config,
+            wipe,
         } => load(
             &ctx,
             project,
@@ -45,11 +46,12 @@ fn run() -> Result<(), Errors> {
             before,
             after,
             with_config,
+            wipe,
         )?,
         Commands::List { project } => list(&ctx, project)?,
         Commands::Copy { project, path } => copy(&ctx, project, path.as_deref())?,
         Commands::Check { path } => check(&ctx, path.as_deref())?,
-        Commands::Remove { project } => remove(&ctx, project)?,
+        Commands::Remove { project, name, all } => remove(&ctx, project, name, all)?,
         Commands::Clean { dry } => clean(&ctx, dry)?,
         Commands::Tmpl { sub } => match sub {
             TmplCommand::New { name, path } => None.unwrap(),
