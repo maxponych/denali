@@ -3,6 +3,7 @@ use globset::{Glob, GlobSet, GlobSetBuilder};
 
 use crate::utils::{
     DenaliToml, Errors, MainManifest, ProjectManifest, Snapshot, Snapshots, context::AppContext,
+    parse_name,
 };
 use std::{
     collections::HashMap,
@@ -21,19 +22,9 @@ pub fn save(
 ) -> Result<(), Errors> {
     let desc = description.unwrap_or("");
 
-    let manifest_path = ctx.main_manifest_path();
-    let manifest_data = fs::read(&manifest_path)?;
-    let mut manifest: MainManifest = serde_json::from_slice(&manifest_data)?;
+    let mut manifest: MainManifest = ctx.load_main_manifest()?;
 
-    let mut parts = project.split('@');
-    let cell = parts.next().map(|s| s.to_string());
-    let project = parts.next().map(|s| s.to_string());
-
-    let (cell, project) = match (cell, project) {
-        (Some(cell), Some(project)) => (Some(cell), project),
-        (Some(project), None) => (None, project),
-        _ => return Err(Errors::InvalidNameFormat(name)),
-    };
+    let (project, cell) = parse_name(project)?;
 
     let proj = manifest
         .projects

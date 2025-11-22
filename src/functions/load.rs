@@ -12,7 +12,8 @@ use chrono::{
 use zstd::Decoder;
 
 use crate::utils::{
-    DenaliToml, Errors, MainManifest, ProjectConfig, ProjectManifest, Snapshot, context::AppContext,
+    DenaliToml, Errors, MainManifest, ProjectConfig, ProjectManifest, ProjectRef, Snapshot,
+    context::AppContext, parse_name,
 };
 
 #[derive(Debug)]
@@ -146,15 +147,7 @@ pub fn load(
     after: Option<String>,
     with_config: bool,
 ) -> Result<(), Errors> {
-    let mut parts = project.split('@');
-    let cell = parts.next().map(|s| s.to_string());
-    let proj_name = parts.next().map(|s| s.to_string());
-
-    let (cell, project_name) = match (cell, proj_name) {
-        (Some(cell), Some(proj)) => (Some(cell), proj),
-        (Some(proj), None) => (None, proj),
-        _ => return Err(Errors::InvalidNameFormat(project)),
-    };
+    let (project_name, cell_name) = parse_name(project.clone())?;
 
     let manifest: MainManifest = ctx.load_main_manifest()?;
 
@@ -163,32 +156,10 @@ pub fn load(
         .get(&project_name)
         .ok_or_else(|| Errors::NotInitialised(PathBuf::from(&project)))?;
 
-    if let Some(cell_name) = &cell {
-        if !proj.cells.contains(cell_name) {
-            return Err(Errors::NotInitialised(PathBuf::from(cell_name)));
+    if let Some(cell) = &cell_name {
+        if !proj.cells.contains(cell) {
+            return Err(Errors::NotInitialised(PathBuf::from(cell)));
         }
-    }
-
-    let project_manifest: ProjectManifest = ctx.load_project_manifest(proj.manifest.clone())?;
-
-    let config_path = Path::new(&project_manifest.source).join(".denali.toml");
-
-    let config: DenaliToml;
-
-    if config_path.exists() && !config_path.is_dir() {
-        let config_data = fs::read_to_string(&config_path)?;
-        config = toml::from_str(&config_data)?;
-    } else {
-        config = DenaliToml {
-            root: ProjectConfig {
-                name: String::new(),
-                description: String::new(),
-                ignore: Vec::new(),
-                snapshot_before: String::new(),
-                snapshot_after: String::new(),
-            },
-            cells: HashMap::new(),
-        };
     }
 
     let mut is_root_path = true;
@@ -196,88 +167,148 @@ pub fn load(
         is_root_path = false;
     }
 
-    if cell == None {
-        let (before_cmp, after_cmp) = match (before, after) {
-            (Some(bef), Some(aft)) => (Some(parse_datetime(&bef)?), Some(parse_datetime(&aft)?)),
-            (Some(bef), None) => (Some(parse_datetime(&bef)?), None),
-            (None, Some(aft)) => (None, Some(parse_datetime(&aft)?)),
-            _ => (None, None),
-        };
+    let project_manifest: ProjectManifest = ctx.load_project_manifest(proj.manifest.clone())?;
+    let config = get_project_config(&project_manifest)?;
 
-        let (toml_bef, toml_aft) = {
-            if is_root_path {
-                let bef = config.root.snapshot_before.trim();
-                let aft = config.root.snapshot_after.trim();
-
-                let before = if bef.is_empty() {
-                    None
-                } else {
-                    Some(parse_datetime(bef)?)
-                };
-
-                let after = if aft.is_empty() {
-                    None
-                } else {
-                    Some(parse_datetime(aft)?)
-                };
-
-                (before, after)
-            } else {
-                (None, None)
-            }
-        };
-
-        let filter = build_filter(
-            before_cmp,
-            after_cmp,
-            name.clone(),
-            toml_bef,
-            toml_aft,
-            None,
+    if let Some(cell) = cell_name {
+        make_cell_load(
+            ctx,
+            &manifest,
+            before,
+            after,
+            &project_manifest,
+            project_name,
+            cell,
+            is_root_path,
+            &config,
+            name,
+            path,
         )?;
-
-        let mut locks: HashMap<String, Filter> = HashMap::new();
-
-        if is_root_path {
-            for cell in &proj.cells {
-                let Some(cell_cfg) = config.cells.get(cell) else {
-                    continue;
-                };
-
-                locks.insert(
-                    cell.clone(),
-                    build_filter(
-                        before_cmp,
-                        after_cmp,
-                        name.clone(),
-                        toml_bef,
-                        toml_aft,
-                        Some(cell_cfg.lock.clone()),
-                    )?,
-                );
-            }
-        } else {
-            for cell in &proj.cells {
-                locks.insert(
-                    cell.to_string(),
-                    build_filter(before_cmp, after_cmp, name.clone(), None, None, None)?,
-                );
-            }
-        }
-
-        load_project(ctx, &project_manifest, &filter, &locks, path, with_config)?;
-        return Ok(());
+    } else {
+        make_project_load(
+            ctx,
+            before,
+            after,
+            is_root_path,
+            name,
+            &config,
+            proj,
+            &project_manifest,
+            path,
+            with_config,
+        )?;
     }
 
+    Ok(())
+}
+
+fn make_project_load(
+    ctx: &AppContext,
+    before: Option<String>,
+    after: Option<String>,
+    is_root_path: bool,
+    name: Option<String>,
+    config: &DenaliToml,
+    proj: &ProjectRef,
+    project_manifest: &ProjectManifest,
+    path: Option<&Path>,
+    with_config: bool,
+) -> Result<(), Errors> {
+    let (before_cmp, after_cmp) = match (before, after) {
+        (Some(bef), Some(aft)) => (Some(parse_datetime(&bef)?), Some(parse_datetime(&aft)?)),
+        (Some(bef), None) => (Some(parse_datetime(&bef)?), None),
+        (None, Some(aft)) => (None, Some(parse_datetime(&aft)?)),
+        _ => (None, None),
+    };
+
+    let (toml_bef, toml_aft) = {
+        if is_root_path {
+            let bef = config.root.snapshot_before.trim();
+            let aft = config.root.snapshot_after.trim();
+
+            let before = if bef.is_empty() {
+                None
+            } else {
+                Some(parse_datetime(bef)?)
+            };
+
+            let after = if aft.is_empty() {
+                None
+            } else {
+                Some(parse_datetime(aft)?)
+            };
+
+            (before, after)
+        } else {
+            (None, None)
+        }
+    };
+
+    let filter = build_filter(
+        before_cmp,
+        after_cmp,
+        name.clone(),
+        toml_bef,
+        toml_aft,
+        None,
+    )?;
+
+    let mut locks: HashMap<String, Filter> = HashMap::new();
+
+    if is_root_path {
+        for cell in &proj.cells {
+            let Some(cell_cfg) = config.cells.get(cell) else {
+                continue;
+            };
+
+            locks.insert(
+                cell.clone(),
+                build_filter(
+                    before_cmp,
+                    after_cmp,
+                    name.clone(),
+                    toml_bef,
+                    toml_aft,
+                    Some(cell_cfg.lock.clone()),
+                )?,
+            );
+        }
+    } else {
+        for cell in &proj.cells {
+            locks.insert(
+                cell.to_string(),
+                build_filter(before_cmp, after_cmp, name.clone(), None, None, None)?,
+            );
+        }
+    }
+
+    load_project(ctx, &project_manifest, &filter, &locks, path, with_config)?;
+    Ok(())
+}
+
+fn make_cell_load(
+    ctx: &AppContext,
+    manifest: &MainManifest,
+    before: Option<String>,
+    after: Option<String>,
+    project_manifest: &ProjectManifest,
+    project_name: String,
+    cell: String,
+    is_root_path: bool,
+    config: &DenaliToml,
+    name: Option<String>,
+    path: Option<&Path>,
+) -> Result<(), Errors> {
     if !manifest
         .projects
         .get(&project_name)
         .ok_or(Errors::InternalError)?
         .cells
-        .contains(&cell.clone().ok_or(Errors::InternalError)?)
+        .contains(&cell.clone())
     {
-        return Err(Errors::ProjectNotFound(cell.ok_or(Errors::InternalError)?));
+        return Err(Errors::ProjectNotFound(cell));
     }
+
     let (before_cmp, after_cmp) = match (before, after) {
         (Some(bef), Some(aft)) => (Some(parse_datetime(&bef)?), Some(parse_datetime(&aft)?)),
         (Some(bef), None) => (Some(parse_datetime(&bef)?), None),
@@ -286,27 +317,23 @@ pub fn load(
     };
 
     let (toml_bef, toml_aft) = if is_root_path {
-        if let Some(cell_name_in) = cell.clone() {
-            if let Some(cell_cfg) = config.cells.get(&cell_name_in) {
-                let bef = cell_cfg.snapshot_before.trim();
-                let aft = cell_cfg.snapshot_after.trim();
+        if let Some(cell_cfg) = config.cells.get(&cell) {
+            let bef = cell_cfg.snapshot_before.trim();
+            let aft = cell_cfg.snapshot_after.trim();
 
-                let before = if bef.is_empty() {
-                    None
-                } else {
-                    Some(parse_datetime(bef)?)
-                };
-
-                let after = if aft.is_empty() {
-                    None
-                } else {
-                    Some(parse_datetime(aft)?)
-                };
-
-                (before, after)
+            let before = if bef.is_empty() {
+                None
             } else {
-                (None, None)
-            }
+                Some(parse_datetime(bef)?)
+            };
+
+            let after = if aft.is_empty() {
+                None
+            } else {
+                Some(parse_datetime(aft)?)
+            };
+
+            (before, after)
         } else {
             (None, None)
         }
@@ -314,7 +341,7 @@ pub fn load(
         (None, None)
     };
 
-    let cell_name = cell.clone().ok_or(Errors::InternalError)?;
+    let cell_name = cell.clone();
 
     let filter = build_filter(
         before_cmp,
@@ -337,8 +364,30 @@ pub fn load(
     )?;
 
     load_cell(ctx, &project_manifest, &filter, cell_name.to_string(), path)?;
-
     Ok(())
+}
+
+fn get_project_config(project_manifest: &ProjectManifest) -> Result<DenaliToml, Errors> {
+    let config_path = Path::new(&project_manifest.source).join(".denali.toml");
+
+    let config: DenaliToml;
+
+    if config_path.exists() && !config_path.is_dir() {
+        let config_data = fs::read_to_string(&config_path)?;
+        config = toml::from_str(&config_data)?;
+    } else {
+        config = DenaliToml {
+            root: ProjectConfig {
+                name: String::new(),
+                description: String::new(),
+                ignore: Vec::new(),
+                snapshot_before: String::new(),
+                snapshot_after: String::new(),
+            },
+            cells: HashMap::new(),
+        };
+    }
+    Ok(config)
 }
 
 fn load_cell(

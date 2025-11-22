@@ -84,19 +84,9 @@ pub fn init(
 
     ctx.make_root_dir()?;
 
-    let manifest_path = ctx.main_manifest_path();
-    let manifest_data = fs::read(&manifest_path)?;
-    let mut manifest: MainManifest = serde_json::from_slice(&manifest_data)?;
+    let mut manifest: MainManifest = ctx.load_main_manifest()?;
 
-    let mut parts = name.split('@');
-    let cell = parts.next().map(|s| s.to_string());
-    let project = parts.next().map(|s| s.to_string());
-
-    let (cell, project) = match (cell, project) {
-        (Some(cell), Some(project)) => (Some(cell), project),
-        (Some(project), None) => (None, project),
-        _ => return Err(Errors::InvalidNameFormat(name)),
-    };
+    let (project, cell) = parse_name(name)?;
 
     if let Some(proj_ref) = manifest.projects.get(&project) {
         if cell.is_none() {
@@ -106,6 +96,31 @@ pub fn init(
         }
     }
 
+    if let Some(cell_name) = cell {
+        init_cell(
+            ctx,
+            &mut manifest,
+            project,
+            &dir,
+            cell_name,
+            desc.to_string(),
+        )?;
+    } else {
+        init_project(ctx, &mut manifest, &dir, desc.to_string(), project)?;
+    }
+
+    ctx.write_main_manifest(&manifest)?;
+
+    Ok(())
+}
+
+fn init_project(
+    ctx: &AppContext,
+    manifest: &mut MainManifest,
+    dir: &Path,
+    desc: String,
+    project: String,
+) -> Result<(), Errors> {
     let uuid = Uuid::new_v4();
 
     let project_ref = ProjectRef {
@@ -115,48 +130,52 @@ pub fn init(
         cells: Vec::new(),
     };
 
-    if cell.is_none() {
-        let config_data = DenaliToml {
-            root: ProjectConfig {
-                name: project.clone(),
-                description: desc.to_string(),
-                ignore: Vec::new(),
-                snapshot_before: String::new(),
-                snapshot_after: String::new(),
-            },
-            cells: HashMap::new(),
-        };
-        make_config(&dir, config_data)?;
-        make_project_manifest(ctx, uuid.to_string(), &dir, desc.to_string())?;
-        manifest.projects.insert(project.clone(), project_ref);
-    } else {
-        let cell_name = cell.unwrap();
-        let proj_ref = manifest
-            .projects
-            .get_mut(&project)
-            .ok_or(Errors::ProjectNotFound(project.clone()))?;
-
-        proj_ref.cells.push(cell_name.to_string());
-        let new_cell = CellRef {
+    let config_data = DenaliToml {
+        root: ProjectConfig {
+            name: project.clone(),
             description: desc.to_string(),
-            path: dir.to_string_lossy().to_string(),
-            latest: String::new(),
-            snapshots: HashMap::new(),
-        };
-        let cell_conf = CellConfig {
-            description: desc.to_string(),
-            path: dir.to_string_lossy().to_string(),
             ignore: Vec::new(),
-            lock: String::new(),
-            snapshot_after: String::new(),
             snapshot_before: String::new(),
-        };
-        update_project_manifest_cell(ctx, proj_ref.manifest.clone(), cell_name.clone(), new_cell)?;
-        update_project_config(Path::new(&proj_ref.path), cell_name.clone(), cell_conf)?;
-    }
+            snapshot_after: String::new(),
+        },
+        cells: HashMap::new(),
+    };
 
-    let json = serde_json::to_vec_pretty(&manifest)?;
-    fs::write(&manifest_path, json)?;
+    make_config(&dir, config_data)?;
+    make_project_manifest(ctx, uuid.to_string(), &dir, desc.to_string())?;
+    manifest.projects.insert(project.clone(), project_ref);
+    Ok(())
+}
 
+fn init_cell(
+    ctx: &AppContext,
+    manifest: &mut MainManifest,
+    project: String,
+    dir: &Path,
+    cell_name: String,
+    desc: String,
+) -> Result<(), Errors> {
+    let proj_ref = manifest
+        .projects
+        .get_mut(&project)
+        .ok_or(Errors::ProjectNotFound(project.clone()))?;
+
+    proj_ref.cells.push(cell_name.to_string());
+    let new_cell = CellRef {
+        description: desc.to_string(),
+        path: dir.to_string_lossy().to_string(),
+        latest: String::new(),
+        snapshots: HashMap::new(),
+    };
+    let cell_conf = CellConfig {
+        description: desc.to_string(),
+        path: dir.to_string_lossy().to_string(),
+        ignore: Vec::new(),
+        lock: String::new(),
+        snapshot_after: String::new(),
+        snapshot_before: String::new(),
+    };
+    update_project_manifest_cell(ctx, proj_ref.manifest.clone(), cell_name.clone(), new_cell)?;
+    update_project_config(Path::new(&proj_ref.path), cell_name.clone(), cell_conf)?;
     Ok(())
 }

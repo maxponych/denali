@@ -9,20 +9,13 @@ use zstd::Decoder;
 
 use crate::utils::{
     CellRef, Errors, MainManifest, ProjectManifest, ProjectRef, Snapshot, context::AppContext,
+    parse_name,
 };
 
 pub fn copy(ctx: &AppContext, project: String, path: Option<&Path>) -> Result<(), Errors> {
     let mut copied: HashSet<String> = HashSet::new();
 
-    let mut parts = project.split('@');
-    let cell = parts.next().map(|s| s.to_string());
-    let proj_name = parts.next().map(|s| s.to_string());
-
-    let (cell, project_name) = match (cell, proj_name) {
-        (Some(cell), Some(proj)) => (Some(cell), proj),
-        (Some(proj), None) => (None, proj),
-        _ => return Err(Errors::InvalidNameFormat(project)),
-    };
+    let (project_name, cell) = parse_name(project)?;
 
     let dir = match path {
         Some(p) => env::current_dir()?.join(p),
@@ -35,89 +28,31 @@ pub fn copy(ctx: &AppContext, project: String, path: Option<&Path>) -> Result<()
         return Err(Errors::NotADir(dir));
     }
 
-    let manifest_path = ctx.main_manifest_path();
-    let manifest_data = fs::read(&manifest_path)?;
-    let mut manifest: MainManifest = serde_json::from_slice(&manifest_data)?;
+    let mut manifest: MainManifest = ctx.load_main_manifest()?;
 
     ctx.make_root_dir()?;
     let root = &dir.join(".denali");
 
     if cell == None && project_name == "all" {
-        for (_, project_ref) in &manifest.projects {
-            let uuid = project_ref.manifest.clone();
-            let project_manifest: ProjectManifest = ctx.load_project_manifest(uuid.clone())?;
-
-            for (_, snapshot) in &project_manifest.snapshots {
-                copy_tree(
-                    ctx,
-                    copy_snapshot(ctx, snapshot.hash.clone(), root)?,
-                    root,
-                    &mut copied,
-                )?;
-            }
-
-            for cell in &project_ref.cells {
-                for (_, snapshot) in &project_manifest
-                    .cells
-                    .get(cell)
-                    .ok_or(Errors::InternalError)?
-                    .snapshots
-                {
-                    copy_tree(
-                        ctx,
-                        copy_snapshot(ctx, snapshot.hash.clone(), root)?,
-                        root,
-                        &mut copied,
-                    )?;
-                }
-            }
-            copy_project_manifest(&ctx.project_manifest_path(uuid.clone()), uuid, root)?;
-        }
-        write_main_manifest(&manifest, root)?;
+        copy_all(&manifest, ctx, root, &mut copied)?;
         return Ok(());
     } else if cell == None && project_name != "all" {
-        let proj_in_main = manifest
-            .projects
-            .remove(&project_name)
-            .ok_or(Errors::ProjectNotFound(project_name.clone()))?;
-        let uuid = proj_in_main.manifest.clone();
-        let project_manifest: ProjectManifest = ctx.load_project_manifest(uuid.clone())?;
-        let mut manifest_obj: MainManifest = MainManifest {
-            projects: HashMap::new(),
-            templates: HashMap::new(),
-        };
-
-        for (_, snapshot) in &project_manifest.snapshots {
-            copy_tree(
-                ctx,
-                copy_snapshot(ctx, snapshot.hash.clone(), root)?,
-                root,
-                &mut copied,
-            )?;
-        }
-
-        for cell in &proj_in_main.cells {
-            for (_, snapshot) in &project_manifest
-                .cells
-                .get(cell)
-                .ok_or(Errors::InternalError)?
-                .snapshots
-            {
-                copy_tree(
-                    ctx,
-                    copy_snapshot(ctx, snapshot.hash.clone(), root)?,
-                    root,
-                    &mut copied,
-                )?;
-            }
-        }
-        manifest_obj.projects.insert(project_name, proj_in_main);
-        copy_project_manifest(&ctx.project_manifest_path(uuid.clone()), uuid, root)?;
-        write_main_manifest(&manifest_obj, root)?;
+        copy_project(ctx, &mut manifest, project_name, root, &mut copied)?;
         return Ok(());
     }
 
     let cell_name = cell.ok_or(Errors::InternalError)?;
+    copy_cell(ctx, &mut manifest, project_name, cell_name, root)?;
+    Ok(())
+}
+
+fn copy_cell(
+    ctx: &AppContext,
+    manifest: &mut MainManifest,
+    project_name: String,
+    cell_name: String,
+    root: &Path,
+) -> Result<(), Errors> {
     let proj_ref = manifest
         .projects
         .remove(&project_name)
@@ -172,7 +107,94 @@ pub fn copy(ctx: &AppContext, project: String, path: Option<&Path>) -> Result<()
 
     write_project_manifest(uuid, &new_proj_manifest, root)?;
     write_main_manifest(&new_manifest, root)?;
+    Ok(())
+}
 
+fn copy_project(
+    ctx: &AppContext,
+    manifest: &mut MainManifest,
+    project_name: String,
+    root: &Path,
+    copied: &mut HashSet<String>,
+) -> Result<(), Errors> {
+    let proj_in_main = manifest
+        .projects
+        .remove(&project_name)
+        .ok_or(Errors::ProjectNotFound(project_name.clone()))?;
+    let uuid = proj_in_main.manifest.clone();
+    let project_manifest: ProjectManifest = ctx.load_project_manifest(uuid.clone())?;
+    let mut manifest_obj: MainManifest = MainManifest {
+        projects: HashMap::new(),
+        templates: HashMap::new(),
+    };
+
+    for (_, snapshot) in &project_manifest.snapshots {
+        copy_tree(
+            ctx,
+            copy_snapshot(ctx, snapshot.hash.clone(), root)?,
+            root,
+            copied,
+        )?;
+    }
+
+    for cell in &proj_in_main.cells {
+        for (_, snapshot) in &project_manifest
+            .cells
+            .get(cell)
+            .ok_or(Errors::InternalError)?
+            .snapshots
+        {
+            copy_tree(
+                ctx,
+                copy_snapshot(ctx, snapshot.hash.clone(), root)?,
+                root,
+                copied,
+            )?;
+        }
+    }
+    manifest_obj.projects.insert(project_name, proj_in_main);
+    copy_project_manifest(&ctx.project_manifest_path(uuid.clone()), uuid, root)?;
+    write_main_manifest(&manifest_obj, root)?;
+    Ok(())
+}
+
+fn copy_all(
+    manifest: &MainManifest,
+    ctx: &AppContext,
+    root: &Path,
+    copied: &mut HashSet<String>,
+) -> Result<(), Errors> {
+    for (_, project_ref) in &manifest.projects {
+        let uuid = project_ref.manifest.clone();
+        let project_manifest: ProjectManifest = ctx.load_project_manifest(uuid.clone())?;
+
+        for (_, snapshot) in &project_manifest.snapshots {
+            copy_tree(
+                ctx,
+                copy_snapshot(ctx, snapshot.hash.clone(), root)?,
+                root,
+                copied,
+            )?;
+        }
+
+        for cell in &project_ref.cells {
+            for (_, snapshot) in &project_manifest
+                .cells
+                .get(cell)
+                .ok_or(Errors::InternalError)?
+                .snapshots
+            {
+                copy_tree(
+                    ctx,
+                    copy_snapshot(ctx, snapshot.hash.clone(), root)?,
+                    root,
+                    copied,
+                )?;
+            }
+        }
+        copy_project_manifest(&ctx.project_manifest_path(uuid.clone()), uuid, root)?;
+    }
+    write_main_manifest(&manifest, root)?;
     Ok(())
 }
 

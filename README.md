@@ -37,7 +37,7 @@ denali load myproject "initial setup"
 ```
 
 ## Commands
-Each command accepts a --root <path> argument, which specifies the path to the object store. For example, if your object store is located at usb/projects/.denali, you should set --root to the directory containing it, e.g. `--root usb/projects`.
+Each command accepts a `--root <path>` argument, which specifies the path to the object store. For example, if your object store is located at `usb/projects/.denali`, you should set `--root` to the directory containing it, e.g. `--root usb/projects`.
 
 ### `denali init <name> -p <path> [-d <description>]`
 Initialize a project or cell.

@@ -31,9 +31,6 @@ pub enum Errors {
     #[error("Date is too large")]
     TooBigDate,
 
-    #[error("Snapshot \"{0}\" does not exist")]
-    SnapshotDoesntExist(String),
-
     #[error("Snapshot \"{0}\" already exists")]
     SnapshotExists(String),
 
