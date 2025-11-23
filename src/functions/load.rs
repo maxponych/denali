@@ -2,6 +2,7 @@ use std::{
     collections::HashMap,
     env, fs,
     io::Read,
+    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     time::SystemTime,
 };
@@ -13,7 +14,7 @@ use zstd::Decoder;
 
 use crate::utils::{
     DenaliToml, Errors, MainManifest, ProjectConfig, ProjectManifest, ProjectRef, Snapshot,
-    context::AppContext, parse_name,
+    TreeStruct, context::AppContext, file_type::FileType, parse_name,
 };
 
 #[derive(Debug)]
@@ -484,7 +485,7 @@ fn load_cell(
 
     let meta: Snapshot = serde_json::from_slice(&meta_data)?;
 
-    restore_cell(ctx, meta.root, dest, manifest, cell)?;
+    restore_cell(ctx, meta.root, dest, manifest, cell, &meta.permissions)?;
 
     Ok(())
 }
@@ -564,17 +565,12 @@ fn load_project(
     Ok(())
 }
 
-struct TreeStruct {
-    mode: String,
-    name: String,
-    hash: [u8; 32],
-}
-
 fn restore_file(
     ctx: &AppContext,
     hash: String,
     dest: &Path,
     with_config: bool,
+    mode: &[u8; 4],
 ) -> Result<(), Errors> {
     let content = ctx.load_object(hash)?;
 
@@ -595,6 +591,10 @@ fn restore_file(
             fs::remove_file(&dest)?;
         }
         fs::write(dest, &content)?;
+        let perms = u32::from_be_bytes(mode.clone()) & 0x0FFF;
+        let mut permissions = fs::metadata(&dest)?.permissions();
+        permissions.set_mode(perms);
+        fs::set_permissions(&dest, permissions)?;
     }
 
     Ok(())
@@ -609,7 +609,7 @@ fn parse_tree(tree: &Vec<u8>) -> Result<Vec<TreeStruct>, Errors> {
         while tree[i] != b' ' {
             i += 1;
         }
-        let mode = String::from_utf8_lossy(&tree[mode_start..i]).to_string();
+        let mode: [u8; 4] = tree[mode_start..i].try_into()?;
         i += 1;
 
         let name_start = i;
@@ -623,9 +623,9 @@ fn parse_tree(tree: &Vec<u8>) -> Result<Vec<TreeStruct>, Errors> {
         i += 32;
 
         entries.push(TreeStruct {
-            mode: mode,
+            mode,
             name: name,
-            hash: hash,
+            hash,
         });
     }
 
@@ -638,6 +638,7 @@ fn restore_cell(
     dest: Option<&Path>,
     manifest: &ProjectManifest,
     name: String,
+    mode: &[u8; 4],
 ) -> Result<(), Errors> {
     let tree = ctx.load_object(hash)?;
     let entries = parse_tree(&tree)?;
@@ -660,16 +661,48 @@ fn restore_cell(
         return Err(Errors::NotADir(destination));
     }
 
-    for entry in entries {
-        let target = destination.join(entry.name);
+    let perms = u32::from_be_bytes(mode.clone()) & 0x0FFF;
+    let mut permissions = fs::metadata(&destination)?.permissions();
+    permissions.set_mode(perms);
+    fs::set_permissions(&destination, permissions)?;
 
-        if entry.mode == "10" {
-            if !target.exists() {
-                fs::create_dir(&target)?;
+    for entry in entries {
+        let target = destination.join(entry.name.clone());
+        let mode = u32::from_be_bytes(entry.mode);
+        let filetype = FileType::from_mode(mode);
+
+        match filetype {
+            FileType::Directory => {
+                if !target.exists() {
+                    fs::create_dir(&target)?;
+                }
+                let perms = mode & 0x0FFF;
+                let mut permissions = fs::metadata(&target)?.permissions();
+                permissions.set_mode(perms);
+                fs::set_permissions(&target, permissions)?;
+
+                restore(ctx, hex::encode(entry.hash), &target, false, manifest)?;
             }
-            restore(ctx, hex::encode(entry.hash), &target, true, manifest)?;
-        } else {
-            restore_file(ctx, hex::encode(entry.hash), &target, true)?;
+            FileType::Symlink => {
+                let temp_path =
+                    String::from_utf8_lossy(&ctx.load_object(hex::encode(entry.hash))?).to_string();
+                let link = Path::new(&temp_path);
+                std::os::unix::fs::symlink(&target, link)?;
+            }
+            FileType::Regular => {
+                restore_file(ctx, hex::encode(entry.hash), &target, false, &entry.mode)?;
+            }
+            FileType::Cell => {
+                maybe_restore_cell(
+                    ctx,
+                    hex::encode(entry.hash),
+                    &target,
+                    &entry.name,
+                    manifest,
+                    &entry.mode,
+                )?;
+            }
+            _ => continue,
         }
     }
 
@@ -682,12 +715,20 @@ fn maybe_restore_cell(
     path: &Path,
     name: &str,
     project: &ProjectManifest,
+    mode: &[u8; 4],
 ) -> Result<(), Errors> {
     if let Some(_) = project.cells.get(name) {
         return Ok(());
     } else {
         let snapshot = ctx.load_snapshot(hash)?;
-        restore_cell(ctx, snapshot.root, Some(path), project, name.to_string())?;
+        restore_cell(
+            ctx,
+            snapshot.root,
+            Some(path),
+            project,
+            name.to_string(),
+            mode,
+        )?;
         return Ok(());
     }
 }
@@ -699,37 +740,60 @@ fn restore(
     with_config: bool,
     project: &ProjectManifest,
 ) -> Result<(), Errors> {
-    let dir = &hash[..3];
-    let filename = &hash[3..];
-
-    let path = ctx.objects_path().join(dir).join(filename);
-    if !path.exists() {
-        return Ok(());
-    }
-    let mut file = fs::File::open(path)?;
-    let mut tree_cmp = Vec::new();
-    file.read_to_end(&mut tree_cmp)?;
-
-    let mut tree = Vec::new();
-    {
-        let mut decoder = Decoder::new(&tree_cmp[..])?;
-        decoder.read_to_end(&mut tree)?;
-    }
+    let tree = ctx.load_object(hash)?;
 
     let entries = parse_tree(&tree)?;
 
     for entry in entries {
         let target = dest.join(entry.name.clone());
+        let mode = u32::from_be_bytes(entry.mode);
+        let filetype = FileType::from_mode(mode);
 
-        if entry.mode == "10" {
-            if !target.exists() {
-                fs::create_dir(&target)?;
+        match filetype {
+            FileType::Directory => {
+                if !target.exists() {
+                    fs::create_dir(&target)?;
+                }
+                let perms = mode & 0x0FFF;
+                let mut permissions = fs::metadata(&target)?.permissions();
+                permissions.set_mode(perms);
+                fs::set_permissions(&target, permissions)?;
+
+                restore(ctx, hex::encode(entry.hash), &target, with_config, project)?;
             }
-            restore(ctx, hex::encode(entry.hash), &target, with_config, project)?;
-        } else if entry.mode == "30" {
-            maybe_restore_cell(ctx, hex::encode(entry.hash), &target, &entry.name, project)?;
-        } else {
-            restore_file(ctx, hex::encode(entry.hash), &target, with_config)?;
+            FileType::Symlink => {
+                if target.exists() {
+                    if target.is_dir() {
+                        fs::remove_dir_all(&target)?;
+                    } else {
+                        fs::remove_file(&target)?;
+                    }
+                }
+                let stored = ctx.load_object(hex::encode(entry.hash))?;
+                let symlink_target = PathBuf::from(String::from_utf8_lossy(&stored).to_string());
+
+                std::os::unix::fs::symlink(&symlink_target, &target)?;
+            }
+            FileType::Regular => {
+                restore_file(
+                    ctx,
+                    hex::encode(entry.hash),
+                    &target,
+                    with_config,
+                    &entry.mode,
+                )?;
+            }
+            FileType::Cell => {
+                maybe_restore_cell(
+                    ctx,
+                    hex::encode(entry.hash),
+                    &target,
+                    &entry.name,
+                    project,
+                    &entry.mode,
+                )?;
+            }
+            _ => continue,
         }
     }
 

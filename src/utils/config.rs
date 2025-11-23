@@ -45,3 +45,9 @@ pub struct TmplToml {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub commands: Vec<String>,
 }
+
+pub struct TreeStruct {
+    pub mode: [u8; 4],
+    pub name: String,
+    pub hash: [u8; 32],
+}

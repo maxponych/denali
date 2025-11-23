@@ -59,4 +59,5 @@ pub struct Snapshot {
     pub description: String,
     pub timestamp: DateTime<Utc>,
     pub root: String,
+    pub permissions: [u8; 4],
 }

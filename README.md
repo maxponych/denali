@@ -14,6 +14,7 @@ Traditional backups are all-or-nothing. Denali lets you snapshot different parts
 - Cells can live anywhere on your filesystem
 - Restore entire projects or individual cells
 - Time-based filtering (restore newest snapshot before/after a date)
+- Permissions and symlinks support
 
 ## Quick Start
 ```bash
@@ -148,8 +149,6 @@ Only `commands` and `placeholders` are supported for template configs at the mom
 ## Current Limitations
 
 - Local storage only (remote sync planned)
-- No symlink support yet
-- File permissions not preserved
 - Missing: diff, merge strategies
 
 ## Roadmap

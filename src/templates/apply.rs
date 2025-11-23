@@ -1,5 +1,9 @@
+use crate::utils::TreeStruct;
+use crate::utils::file_type::FileType;
 use crate::utils::{Errors, TemplateRef, TmplToml, context::AppContext};
 use dialoguer::Input;
+use std::os::unix::fs::PermissionsExt;
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::{collections::HashMap, env, fs, path::Path};
 
@@ -83,13 +87,7 @@ fn execute_commands(
     Ok(())
 }
 
-struct TreeStruct {
-    mode: String,
-    name: String,
-    hash: [u8; 32],
-}
-
-fn restore_file(ctx: &AppContext, hash: String, dest: &Path) -> Result<(), Errors> {
+fn restore_file(ctx: &AppContext, hash: String, dest: &Path, mode: [u8; 4]) -> Result<(), Errors> {
     let content = ctx.load_object(hash)?;
 
     if dest.exists() {
@@ -97,6 +95,10 @@ fn restore_file(ctx: &AppContext, hash: String, dest: &Path) -> Result<(), Error
     }
 
     fs::write(dest, content)?;
+    let perms = u32::from_be_bytes(mode.clone()) & 0x0FFF;
+    let mut permissions = fs::metadata(&dest)?.permissions();
+    permissions.set_mode(perms);
+    fs::set_permissions(&dest, permissions)?;
     Ok(())
 }
 
@@ -109,7 +111,7 @@ fn parse_tree(tree: &Vec<u8>) -> Result<Vec<TreeStruct>, Errors> {
         while tree[i] != b' ' {
             i += 1;
         }
-        let mode = String::from_utf8_lossy(&tree[mode_start..i]).to_string();
+        let mode: [u8; 4] = tree[mode_start..i].try_into()?;
         i += 1;
 
         let name_start = i;
@@ -123,9 +125,9 @@ fn parse_tree(tree: &Vec<u8>) -> Result<Vec<TreeStruct>, Errors> {
         i += 32;
 
         entries.push(TreeStruct {
-            mode: mode,
+            mode,
             name: name,
-            hash: hash,
+            hash,
         });
     }
 
@@ -139,14 +141,38 @@ fn restore(ctx: &AppContext, hash: String, dest: &Path) -> Result<(), Errors> {
 
     for entry in entries {
         let target = dest.join(entry.name.clone());
+        let mode = u32::from_be_bytes(entry.mode);
+        let filetype = FileType::from_mode(mode);
 
-        if entry.mode == "10" {
-            if !target.exists() {
-                fs::create_dir(&target)?;
+        match filetype {
+            FileType::Directory => {
+                if !target.exists() {
+                    fs::create_dir(&target)?;
+                }
+                let perms = mode & 0x0FFF;
+                let mut permissions = fs::metadata(&target)?.permissions();
+                permissions.set_mode(perms);
+                fs::set_permissions(&target, permissions)?;
+
+                restore(ctx, hex::encode(entry.hash), &target)?;
             }
-            restore(ctx, hex::encode(entry.hash), &target)?;
-        } else {
-            restore_file(ctx, hex::encode(entry.hash), &target)?;
+            FileType::Symlink => {
+                if target.exists() {
+                    if target.is_dir() {
+                        fs::remove_dir_all(&target)?;
+                    } else {
+                        fs::remove_file(&target)?;
+                    }
+                }
+                let stored = ctx.load_object(hex::encode(entry.hash))?;
+                let symlink_target = PathBuf::from(String::from_utf8_lossy(&stored).to_string());
+
+                std::os::unix::fs::symlink(&symlink_target, &target)?;
+            }
+            FileType::Regular => {
+                restore_file(ctx, hex::encode(entry.hash), &target, entry.mode)?;
+            }
+            _ => continue,
         }
     }
 

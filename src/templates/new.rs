@@ -1,13 +1,12 @@
 use std::{
     env,
-    ffi::OsString,
     fs::{self, File},
     io::Read,
-    os::unix::ffi::OsStrExt,
+    os::unix::fs::MetadataExt,
     path::Path,
 };
 
-use crate::utils::{Errors, TemplateRef, context::AppContext};
+use crate::utils::{Errors, TemplateRef, TreeStruct, context::AppContext};
 
 pub fn tmpl_new(
     ctx: &AppContext,
@@ -55,17 +54,11 @@ pub fn tmpl_new(
     Ok(())
 }
 
-struct TreeStruct {
-    mode: String,
-    name: OsString,
-    hash: [u8; 32],
-}
-
 fn build_tree(ctx: &AppContext, entries: Vec<TreeStruct>) -> Result<[u8; 32], Errors> {
     let mut content = Vec::new();
 
     for entry in entries {
-        content.extend_from_slice(entry.mode.as_bytes());
+        content.extend_from_slice(&entry.mode);
         content.push(b' ');
         content.extend_from_slice(entry.name.as_bytes());
         content.push(0);
@@ -87,10 +80,6 @@ fn hash_file(ctx: &AppContext, path: &Path) -> Result<[u8; 32], Errors> {
 
 fn snapshot_dir(ctx: &AppContext, path: &Path) -> Result<[u8; 32], Errors> {
     let mut entries: Vec<TreeStruct> = Vec::new();
-
-    let mode_dir = "10";
-    let mode_file = "20";
-
     if path.is_dir() {
         for entry in fs::read_dir(path)? {
             let entry = entry?;
@@ -99,7 +88,13 @@ fn snapshot_dir(ctx: &AppContext, path: &Path) -> Result<[u8; 32], Errors> {
                 .file_name()
                 .ok_or(Errors::DoesntExist(path.to_path_buf()))?;
 
-            let hash = if path.is_dir() {
+            let meta = fs::symlink_metadata(path.clone()).unwrap();
+            let mode = meta.mode().to_be_bytes();
+
+            let hash = if meta.file_type().is_symlink() {
+                let target = fs::read_link(&path)?;
+                ctx.save_object(target.to_string_lossy().as_bytes().to_vec())?
+            } else if meta.is_dir() {
                 snapshot_dir(ctx, &path)?
             } else {
                 hash_file(ctx, &path)?
@@ -107,8 +102,8 @@ fn snapshot_dir(ctx: &AppContext, path: &Path) -> Result<[u8; 32], Errors> {
 
             if name_os != ".denali.tmpl.toml" {
                 entries.push(TreeStruct {
-                    mode: if path.is_dir() { mode_dir } else { mode_file }.to_string(),
-                    name: name_os.to_os_string(),
+                    mode,
+                    name: name_os.to_string_lossy().to_string(),
                     hash,
                 });
             }
@@ -119,9 +114,11 @@ fn snapshot_dir(ctx: &AppContext, path: &Path) -> Result<[u8; 32], Errors> {
             .ok_or(Errors::DoesntExist(path.to_path_buf()))?;
         if name_os != ".denali.tmpl.toml" {
             let hash = hash_file(ctx, path)?;
+            let meta = fs::symlink_metadata(path).unwrap();
+            let mode = meta.mode().to_be_bytes();
             entries.push(TreeStruct {
-                mode: mode_file.to_string(),
-                name: name_os.to_os_string(),
+                mode,
+                name: name_os.to_string_lossy().to_string(),
                 hash,
             });
         }

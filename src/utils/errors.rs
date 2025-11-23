@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use hex::FromHexError;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -58,7 +59,10 @@ pub enum Errors {
     #[error("Stopped by user")]
     Stopped,
 
-    #[error("I/O operation failed")]
+    #[error("Hex decoding failed")]
+    Hex(#[from] FromHexError),
+
+    #[error("I/O operation failed:\n {0}")]
     Io(#[from] std::io::Error),
 
     #[error("JSON error")]

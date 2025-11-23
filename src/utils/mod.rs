@@ -1,6 +1,7 @@
 pub mod config;
 pub mod context;
 pub mod errors;
+pub mod file_type;
 pub mod manifests;
 pub mod parse_name;
 
