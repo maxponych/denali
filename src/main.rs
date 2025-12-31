@@ -53,11 +53,7 @@ fn run() -> Result<(), Errors> {
             wipe,
         )?,
         Commands::List { project } => list(&ctx, project)?,
-        Commands::Copy { project, path } =>
-        /* copy(&ctx, project, path.as_deref())?, */
-        {
-            ()
-        }
+        Commands::Copy { project, path } => copy(&ctx, project, path.as_deref())?,
         Commands::Check { path } => check(&ctx, path.as_deref())?,
         Commands::Remove { project, name, all } => remove(&ctx, project, name, all)?,
         Commands::Clean { dry } => clean(&ctx, dry)?,

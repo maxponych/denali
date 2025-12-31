@@ -1,14 +1,11 @@
 use std::{
     collections::{HashMap, HashSet},
-    env, fs,
-    io::Read,
+    env,
     path::Path,
 };
 
-use zstd::Decoder;
-
 use crate::utils::{
-    CellRef, Errors, MainManifest, ProjectManifest, ProjectRef, Snapshot, context::AppContext,
+    CellRef, Errors, MainManifest, ProjectManifest, ProjectRef, context::AppContext,
     file_type::FileType, parse_name,
 };
 
@@ -35,15 +32,15 @@ pub fn copy(ctx: &AppContext, project: String, path: Option<&Path>) -> Result<()
     dest.make_root_dir()?;
 
     if cell == None && project_name == "all" {
-        copy_all(&manifest, ctx, dest, &mut copied)?;
+        copy_all(&manifest, ctx, &dest, &mut copied)?;
         return Ok(());
     } else if cell == None && project_name != "all" {
-        copy_project(ctx, &mut manifest, project_name, dest, &mut copied)?;
+        copy_project(ctx, &mut manifest, project_name, &dest, &mut copied)?;
         return Ok(());
     }
 
     let cell_name = cell.ok_or(Errors::InternalError)?;
-    copy_cell(ctx, &mut manifest, project_name, cell_name, dest)?;
+    copy_cell(ctx, &mut manifest, project_name, cell_name, &dest)?;
     Ok(())
 }
 
@@ -52,17 +49,31 @@ fn copy_cell(
     manifest: &mut MainManifest,
     project_name: String,
     cell_name: String,
-    root: &Path,
+    dest: &AppContext,
 ) -> Result<(), Errors> {
     let proj_ref = manifest
         .projects
         .remove(&project_name)
         .ok_or(Errors::ProjectNotFound(project_name.clone()))?;
+    if proj_ref.is_deleted {
+        return Err(Errors::ProjectNotFound(project_name.clone()));
+    }
+
     let uuid = proj_ref.manifest.clone();
     let mut project_manifest: ProjectManifest = ctx.load_project_manifest(uuid.clone())?;
 
+    let cell_ref = project_manifest
+        .cells
+        .remove(&cell_name)
+        .ok_or(Errors::InternalError)?;
+    if cell_ref.is_deleted {
+        return Err(Errors::ProjectNotFound(cell_name.clone()));
+    }
+
     let new_proj_ref: ProjectRef = ProjectRef {
         path: proj_ref.path,
+        is_deleted: proj_ref.is_deleted,
+        timestamp: proj_ref.timestamp,
         manifest: proj_ref.manifest.clone(),
         latest: String::new(),
         cells: vec![cell_name.clone()],
@@ -71,19 +82,16 @@ fn copy_cell(
     new_proj.insert(project_name, new_proj_ref);
     let new_manifest: MainManifest = MainManifest {
         projects: new_proj,
+        remotes: HashMap::new(),
         templates: HashMap::new(),
     };
 
-    let cell_ref = project_manifest
-        .cells
-        .remove(&cell_name)
-        .ok_or(Errors::InternalError)?;
-
     let mut new_cells: HashMap<String, CellRef> = HashMap::new();
-    new_cells.insert(cell_name.clone(), cell_ref);
+    new_cells.insert(cell_name.clone(), cell_ref.clone());
 
     let new_proj_manifest: ProjectManifest = ProjectManifest {
         source: project_manifest.source,
+        name: project_manifest.name,
         description: project_manifest.description,
         timestamp: project_manifest.timestamp,
         snapshots: HashMap::new(),
@@ -92,22 +100,18 @@ fn copy_cell(
 
     let mut copied = HashSet::new();
 
-    for (_, snapshot) in &new_proj_manifest
-        .cells
-        .get(&cell_name)
-        .ok_or(Errors::InternalError)?
-        .snapshots
-    {
-        copy_tree(
-            ctx,
-            copy_snapshot(ctx, snapshot.hash.clone(), root)?,
-            root,
-            &mut copied,
-        )?;
+    for (_, snapshot) in &cell_ref.snapshots {
+        if snapshot.is_deleted {
+            continue;
+        }
+        let snapshot = ctx.load_snapshot(snapshot.hash.clone())?;
+        let bytes = serde_json::to_vec(&snapshot)?;
+        dest.save_snapshot(bytes)?;
+        copy_tree(ctx, snapshot.root, dest, &mut copied)?;
     }
 
-    write_project_manifest(uuid, &new_proj_manifest, root)?;
-    write_main_manifest(&new_manifest, root)?;
+    dest.write_project_manifest(uuid, &new_proj_manifest)?;
+    dest.write_main_manifest(&new_manifest)?;
     Ok(())
 }
 
@@ -115,199 +119,143 @@ fn copy_project(
     ctx: &AppContext,
     manifest: &mut MainManifest,
     project_name: String,
-    root: &Path,
+    dest: &AppContext,
     copied: &mut HashSet<String>,
 ) -> Result<(), Errors> {
     let proj_in_main = manifest
         .projects
         .remove(&project_name)
         .ok_or(Errors::ProjectNotFound(project_name.clone()))?;
+    if proj_in_main.is_deleted {
+        return Err(Errors::ProjectNotFound(project_name.clone()));
+    }
     let uuid = proj_in_main.manifest.clone();
     let project_manifest: ProjectManifest = ctx.load_project_manifest(uuid.clone())?;
     let mut manifest_obj: MainManifest = MainManifest {
         projects: HashMap::new(),
+        remotes: HashMap::new(),
         templates: HashMap::new(),
     };
 
     for (_, snapshot) in &project_manifest.snapshots {
-        copy_tree(
-            ctx,
-            copy_snapshot(ctx, snapshot.hash.clone(), root)?,
-            root,
-            copied,
-        )?;
+        if snapshot.is_deleted {
+            continue;
+        }
+        let snapshot = ctx.load_snapshot(snapshot.hash.clone())?;
+        let bytes = serde_json::to_vec(&snapshot)?;
+        dest.save_snapshot(bytes)?;
+        copy_tree(ctx, snapshot.root, dest, copied)?;
     }
 
     for cell in &proj_in_main.cells {
-        for (_, snapshot) in &project_manifest
+        let cell = project_manifest
             .cells
             .get(cell)
-            .ok_or(Errors::InternalError)?
-            .snapshots
-        {
-            copy_tree(
-                ctx,
-                copy_snapshot(ctx, snapshot.hash.clone(), root)?,
-                root,
-                copied,
-            )?;
+            .ok_or(Errors::InternalError)?;
+        if cell.is_deleted {
+            continue;
+        }
+        for (_, snapshot) in &cell.snapshots {
+            if snapshot.is_deleted {
+                continue;
+            }
+            let snapshot = ctx.load_snapshot(snapshot.hash.clone())?;
+            let bytes = serde_json::to_vec(&snapshot)?;
+            dest.save_snapshot(bytes)?;
+            copy_tree(ctx, snapshot.root, dest, copied)?;
         }
     }
     manifest_obj.projects.insert(project_name, proj_in_main);
-    copy_project_manifest(&ctx.project_manifest_path(uuid.clone()), uuid, root)?;
-    write_main_manifest(&manifest_obj, root)?;
+    dest.write_project_manifest(uuid, &project_manifest)?;
+    dest.write_main_manifest(&manifest_obj)?;
     Ok(())
 }
 
 fn copy_all(
     manifest: &MainManifest,
     ctx: &AppContext,
-    root: &Path,
+    dest: &AppContext,
     copied: &mut HashSet<String>,
 ) -> Result<(), Errors> {
     for (_, project_ref) in &manifest.projects {
+        if project_ref.is_deleted {
+            continue;
+        }
         let uuid = project_ref.manifest.clone();
         let project_manifest: ProjectManifest = ctx.load_project_manifest(uuid.clone())?;
 
         for (_, snapshot) in &project_manifest.snapshots {
-            copy_tree(
-                ctx,
-                copy_snapshot(ctx, snapshot.hash.clone(), root)?,
-                root,
-                copied,
-            )?;
+            if snapshot.is_deleted {
+                continue;
+            }
+            if copied.contains(&snapshot.hash) {
+                continue;
+            }
+            let snapshot = ctx.load_snapshot(snapshot.hash.clone())?;
+            let bytes = serde_json::to_vec(&snapshot)?;
+            dest.save_snapshot(bytes)?;
+            copy_tree(ctx, snapshot.root, dest, copied)?;
         }
 
         for cell in &project_ref.cells {
-            for (_, snapshot) in &project_manifest
+            let cell = &project_manifest
                 .cells
                 .get(cell)
-                .ok_or(Errors::InternalError)?
-                .snapshots
-            {
-                copy_tree(
-                    ctx,
-                    copy_snapshot(ctx, snapshot.hash.clone(), root)?,
-                    root,
-                    copied,
-                )?;
+                .ok_or(Errors::InternalError)?;
+            if cell.is_deleted {
+                continue;
+            }
+            for (_, snapshot) in &cell.snapshots {
+                if snapshot.is_deleted {
+                    continue;
+                }
+                if copied.contains(&snapshot.hash) {
+                    continue;
+                }
+                let snapshot = ctx.load_snapshot(snapshot.hash.clone())?;
+                let bytes = serde_json::to_vec(&snapshot)?;
+                dest.save_snapshot(bytes)?;
+                copy_tree(ctx, snapshot.root, dest, copied)?;
             }
         }
-        copy_project_manifest(&ctx.project_manifest_path(uuid.clone()), uuid, root)?;
+        let proj_manifest = ctx.load_project_manifest(uuid.clone())?;
+        dest.write_project_manifest(uuid, &proj_manifest)?;
     }
-    write_main_manifest(&manifest, root)?;
+    dest.write_main_manifest(manifest)?;
     Ok(())
 }
 
 fn copy_tree(
     ctx: &AppContext,
     hash: String,
-    path: &Path,
+    dest: &AppContext,
     copied: &mut HashSet<String>,
 ) -> Result<(), Errors> {
-    let dir = &hash[..3];
-    let filename = &hash[3..];
-
-    let file_path = ctx.objects_path().join(dir).join(filename);
-    let mut file = fs::File::open(file_path)?;
-    let mut blob_comp = Vec::new();
-    file.read_to_end(&mut blob_comp)?;
-
-    let mut content = Vec::new();
-    {
-        let mut decoder = Decoder::new(&blob_comp[..])?;
-        decoder.read_to_end(&mut content)?;
-    }
+    let content = ctx.load_object(hash)?;
 
     let entries = parse_tree(&content)?;
 
     for entry in entries {
-        if copied.contains(&hex::encode(entry.hash))
-            || FileType::from_mode(u32::from_be_bytes(entry.mode)) == FileType::Cell
-        {
+        if copied.contains(&hex::encode(entry.hash)) {
             continue;
         }
         copied.insert(hex::encode(entry.hash));
+        if FileType::from_mode(u32::from_be_bytes(entry.mode)) == FileType::Cell {
+            let snapshot = ctx.load_snapshot(hex::encode(entry.hash))?;
+            let bytes = serde_json::to_vec(&snapshot)?;
+            dest.save_snapshot(bytes)?;
+            copy_tree(ctx, snapshot.root, dest, copied)?;
+        }
         if FileType::from_mode(u32::from_be_bytes(entry.mode)) == FileType::Directory {
-            copy_tree(ctx, hex::encode(entry.hash), path, copied)?;
+            copy_tree(ctx, hex::encode(entry.hash), dest, copied)?;
         } else {
-            copy_object(ctx, hex::encode(entry.hash), path)?;
+            let data = ctx.load_object(hex::encode(entry.hash))?;
+            dest.save_object(data)?;
         }
     }
 
-    copy_object(ctx, hash, path)?;
+    dest.save_object(content)?;
 
-    Ok(())
-}
-
-fn copy_object(ctx: &AppContext, hash: String, path: &Path) -> Result<(), Errors> {
-    let dir = &hash[..3];
-    let filename = &hash[3..];
-
-    let root = ctx.objects_path().join(dir).join(filename);
-    let mut file = fs::File::open(root)?;
-    let mut blob_comp = Vec::new();
-    file.read_to_end(&mut blob_comp)?;
-
-    let directory = path.join("objects").join(dir);
-    if !directory.exists() {
-        fs::create_dir(&directory)?;
-    }
-    let filepath = directory.join(filename);
-
-    fs::write(filepath, blob_comp)?;
-
-    Ok(())
-}
-
-fn copy_snapshot(ctx: &AppContext, hash: String, path: &Path) -> Result<String, Errors> {
-    let dir = &hash[..3];
-    let filename = &hash[3..];
-
-    let root = ctx.snapshots_path().join(dir).join(filename);
-
-    let mut file = fs::File::open(root)?;
-    let mut blob_comp = Vec::new();
-    file.read_to_end(&mut blob_comp)?;
-
-    let mut content = Vec::new();
-    {
-        let mut decoder = Decoder::new(&blob_comp[..])?;
-        decoder.read_to_end(&mut content)?;
-    }
-
-    let snapshot: Snapshot = serde_json::from_slice(&content)?;
-    let destination = path.join("snapshots").join(dir);
-    fs::create_dir(&destination)?;
-    let file = destination.join(filename);
-    fs::write(file, blob_comp)?;
-    Ok(snapshot.root)
-}
-
-fn copy_project_manifest(manifest: &Path, uuid: String, path: &Path) -> Result<(), Errors> {
-    let project_manifest_data = fs::read(manifest)?;
-
-    let file = path.join("projects").join(format!("{}.json", uuid));
-    fs::write(file, project_manifest_data)?;
-
-    Ok(())
-}
-
-fn write_project_manifest(
-    uuid: String,
-    manifest: &ProjectManifest,
-    path: &Path,
-) -> Result<(), Errors> {
-    let project_manifest_path = path.join("projects").join(format!("{}.json", uuid));
-    let project_manifest_data = serde_json::to_vec_pretty(manifest)?;
-    fs::write(project_manifest_path, project_manifest_data)?;
-    Ok(())
-}
-
-fn write_main_manifest(manifest: &MainManifest, path: &Path) -> Result<(), Errors> {
-    let manifest_vec = serde_json::to_vec_pretty(manifest)?;
-    fs::remove_file(path.join("manifest.json"))?;
-    fs::write(path.join("manifest.json"), manifest_vec)?;
     Ok(())
 }
 
