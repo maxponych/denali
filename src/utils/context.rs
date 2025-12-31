@@ -41,10 +41,7 @@ impl AppContext {
     }
 
     pub fn project_manifest_path(&self, uuid: String) -> PathBuf {
-        self.root
-            .join("snapshots")
-            .join("projects")
-            .join(format!("{}.json", uuid))
+        self.root.join("projects").join(format!("{}.json", uuid))
     }
 
     pub fn templates_path(&self) -> PathBuf {
@@ -52,7 +49,7 @@ impl AppContext {
     }
 
     pub fn snapshots_path(&self) -> PathBuf {
-        self.root.join("snapshots").join("meta")
+        self.root.join("snapshots")
     }
 
     pub fn objects_path(&self) -> PathBuf {
@@ -67,14 +64,15 @@ impl AppContext {
         }
 
         fs::create_dir_all(path.join("objects"))?;
-        fs::create_dir_all(path.join("snapshots").join("meta"))?;
-        fs::create_dir_all(path.join("snapshots").join("projects"))?;
+        fs::create_dir_all(path.join("snapshots"))?;
+        fs::create_dir_all(path.join("projects"))?;
         fs::create_dir_all(path.join("templates"))?;
         let manifest_file = path.join("manifest.json");
         if !manifest_file.exists() {
             let manifest_obj: MainManifest = MainManifest {
                 projects: HashMap::new(),
                 templates: HashMap::new(),
+                remotes: HashMap::new(),
             };
             let manifest_data = serde_json::to_vec_pretty(&manifest_obj)?;
             fs::write(manifest_file, manifest_data)?;
@@ -145,7 +143,7 @@ impl AppContext {
         let dir = &name[..3];
         let filename = &name[3..];
 
-        let obj_path = self.root.join("snapshots").join("meta").join(dir);
+        let obj_path = self.root.join("snapshots").join(dir);
         fs::create_dir_all(&obj_path)?;
         let file_path = obj_path.join(filename);
 

@@ -9,7 +9,7 @@ use zstd::Decoder;
 
 use crate::utils::{
     CellRef, Errors, MainManifest, ProjectManifest, ProjectRef, Snapshot, context::AppContext,
-    parse_name,
+    file_type::FileType, parse_name,
 };
 
 pub fn copy(ctx: &AppContext, project: String, path: Option<&Path>) -> Result<(), Errors> {
@@ -22,6 +22,8 @@ pub fn copy(ctx: &AppContext, project: String, path: Option<&Path>) -> Result<()
         None => env::current_dir()?,
     };
 
+    let dest = AppContext::new(Some(dir.clone()))?;
+
     if !dir.exists() {
         return Err(Errors::DoesntExist(dir));
     } else if !dir.is_dir() {
@@ -30,19 +32,18 @@ pub fn copy(ctx: &AppContext, project: String, path: Option<&Path>) -> Result<()
 
     let mut manifest: MainManifest = ctx.load_main_manifest()?;
 
-    ctx.make_root_dir()?;
-    let root = &dir.join(".denali");
+    dest.make_root_dir()?;
 
     if cell == None && project_name == "all" {
-        copy_all(&manifest, ctx, root, &mut copied)?;
+        copy_all(&manifest, ctx, dest, &mut copied)?;
         return Ok(());
     } else if cell == None && project_name != "all" {
-        copy_project(ctx, &mut manifest, project_name, root, &mut copied)?;
+        copy_project(ctx, &mut manifest, project_name, dest, &mut copied)?;
         return Ok(());
     }
 
     let cell_name = cell.ok_or(Errors::InternalError)?;
-    copy_cell(ctx, &mut manifest, project_name, cell_name, root)?;
+    copy_cell(ctx, &mut manifest, project_name, cell_name, dest)?;
     Ok(())
 }
 
@@ -221,11 +222,13 @@ fn copy_tree(
     let entries = parse_tree(&content)?;
 
     for entry in entries {
-        if copied.contains(&hex::encode(entry.hash)) || entry.mode == "30" {
+        if copied.contains(&hex::encode(entry.hash))
+            || FileType::from_mode(u32::from_be_bytes(entry.mode)) == FileType::Cell
+        {
             continue;
         }
         copied.insert(hex::encode(entry.hash));
-        if entry.mode == "10" {
+        if FileType::from_mode(u32::from_be_bytes(entry.mode)) == FileType::Directory {
             copy_tree(ctx, hex::encode(entry.hash), path, copied)?;
         } else {
             copy_object(ctx, hex::encode(entry.hash), path)?;
@@ -274,7 +277,7 @@ fn copy_snapshot(ctx: &AppContext, hash: String, path: &Path) -> Result<String, 
     }
 
     let snapshot: Snapshot = serde_json::from_slice(&content)?;
-    let destination = path.join("snapshots").join("meta").join(dir);
+    let destination = path.join("snapshots").join(dir);
     fs::create_dir(&destination)?;
     let file = destination.join(filename);
     fs::write(file, blob_comp)?;
@@ -284,10 +287,7 @@ fn copy_snapshot(ctx: &AppContext, hash: String, path: &Path) -> Result<String, 
 fn copy_project_manifest(manifest: &Path, uuid: String, path: &Path) -> Result<(), Errors> {
     let project_manifest_data = fs::read(manifest)?;
 
-    let file = path
-        .join("snapshots")
-        .join("projects")
-        .join(format!("{}.json", uuid));
+    let file = path.join("projects").join(format!("{}.json", uuid));
     fs::write(file, project_manifest_data)?;
 
     Ok(())
@@ -298,10 +298,7 @@ fn write_project_manifest(
     manifest: &ProjectManifest,
     path: &Path,
 ) -> Result<(), Errors> {
-    let project_manifest_path = path
-        .join("snapshots")
-        .join("projects")
-        .join(format!("{}.json", uuid));
+    let project_manifest_path = path.join("projects").join(format!("{}.json", uuid));
     let project_manifest_data = serde_json::to_vec_pretty(manifest)?;
     fs::write(project_manifest_path, project_manifest_data)?;
     Ok(())
@@ -315,7 +312,7 @@ fn write_main_manifest(manifest: &MainManifest, path: &Path) -> Result<(), Error
 }
 
 struct TreeStruct {
-    mode: String,
+    mode: [u8; 4],
     hash: [u8; 32],
 }
 
@@ -328,7 +325,7 @@ fn parse_tree(tree: &Vec<u8>) -> Result<Vec<TreeStruct>, Errors> {
         while tree[i] != b' ' {
             i += 1;
         }
-        let mode = String::from_utf8_lossy(&tree[mode_start..i]).to_string();
+        let mode: [u8; 4] = tree[mode_start..i].try_into()?;
         i += 1;
 
         while tree[i] != 0 {

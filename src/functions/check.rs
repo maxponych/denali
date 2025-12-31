@@ -113,10 +113,12 @@ fn delete_cell(ctx: &AppContext, cell: String, project_name: String) -> Result<(
     let uuid = proj_ref.manifest.clone();
     let mut project_manifest = ctx.load_project_manifest(uuid.clone())?;
     proj_ref.cells.retain(|n| n != &cell);
-    let path = ctx.project_manifest_path(uuid);
-    project_manifest.cells.remove(&cell);
-    let project_manifest_data = serde_json::to_vec_pretty(&project_manifest)?;
-    fs::write(path, &project_manifest_data)?;
+    project_manifest
+        .cells
+        .get_mut(&cell)
+        .ok_or(Errors::InternalError)?
+        .is_deleted = true;
+    ctx.write_project_manifest(uuid, &project_manifest)?;
     let manifest_data = serde_json::to_vec_pretty(&manifest)?;
     fs::write(ctx.main_manifest_path(), &manifest_data)?;
     Ok(())
@@ -281,11 +283,13 @@ fn change_cell_path(
     let project_ref = manifest.projects.get(name).ok_or(Errors::InternalError)?;
     let uuid = project_ref.manifest.clone();
     let mut project_manifest = ctx.load_project_manifest(uuid.clone())?;
-    project_manifest
+    let cell_ref = project_manifest
         .cells
         .get_mut(cell_name)
-        .ok_or(Errors::InternalError)?
-        .path = path;
+        .ok_or(Errors::InternalError)?;
+
+    cell_ref.path = path;
+    cell_ref.timestamp = Utc::now();
     ctx.write_project_manifest(uuid, &project_manifest)?;
     Ok(())
 }
@@ -300,11 +304,13 @@ fn change_cell_description(
     let project_ref = manifest.projects.get(name).ok_or(Errors::InternalError)?;
     let uuid = project_ref.manifest.clone();
     let mut project_manifest = ctx.load_project_manifest(uuid.clone())?;
-    project_manifest
+    let cell_ref = project_manifest
         .cells
         .get_mut(cell_name)
-        .ok_or(Errors::InternalError)?
-        .description = description;
+        .ok_or(Errors::InternalError)?;
+
+    cell_ref.description = description;
+    cell_ref.timestamp = Utc::now();
     ctx.write_project_manifest(uuid, &project_manifest)?;
     Ok(())
 }
@@ -343,10 +349,12 @@ fn update_cell_name(
         ctx.write_main_manifest(&manifest)?;
 
         let mut project_manifest = ctx.load_project_manifest(uuid.clone())?;
-        let cell_ref = project_manifest
+        let mut cell_ref = project_manifest
             .cells
             .remove(old_name)
             .ok_or(Errors::InternalError)?;
+
+        cell_ref.timestamp = Utc::now();
         project_manifest
             .cells
             .insert(new_name.to_string(), cell_ref);
@@ -387,7 +395,10 @@ fn create_cell(
         fs::write(ctx.main_manifest_path(), &manifest_vec)?;
 
         let cell_ref = CellRef {
+            is_deleted: false,
+            uuid: Uuid::new_v4().to_string(),
             description: cell.description.clone(),
+            timestamp: Utc::now(),
             path: cell.path.clone(),
             latest: String::new(),
             snapshots: HashMap::new(),
@@ -404,6 +415,7 @@ fn change_project_description(path: &Path, description: &str) -> Result<(), Erro
     let mut manifest: ProjectManifest = serde_json::from_slice(&manifest_data)?;
 
     manifest.description = description.to_string();
+    manifest.timestamp = Utc::now();
 
     let json = serde_json::to_vec_pretty(&manifest)?;
     fs::write(path, json)?;
@@ -421,6 +433,7 @@ fn change_project_path(
     let mut manifest: ProjectManifest = serde_json::from_slice(&manifest_data)?;
 
     manifest.source = path.to_string_lossy().to_string();
+    manifest.timestamp = Utc::now();
     project_ref.path = path.to_string_lossy().to_string();
 
     update_proj_in_main(&ctx, name, project_ref)?;
@@ -450,8 +463,11 @@ fn create_proj(ctx: &AppContext, path: PathBuf, config: &DenaliToml) -> Result<(
             &ctx.project_manifest_path(uuid.to_string()),
             &path,
             config.root.description.clone(),
+            config.root.name.clone(),
         )?;
         let mut new_project_ref = ProjectRef {
+            is_deleted: false,
+            timestamp: Utc::now(),
             path: path.to_string_lossy().to_string(),
             manifest: uuid.to_string(),
             latest: String::new(),
@@ -459,7 +475,10 @@ fn create_proj(ctx: &AppContext, path: PathBuf, config: &DenaliToml) -> Result<(
         };
         for (name, cell) in &config.cells {
             let cell_ref = CellRef {
+                is_deleted: false,
+                uuid: Uuid::new_v4().to_string(),
                 description: cell.description.clone(),
+                timestamp: Utc::now(),
                 path: cell.path.clone(),
                 latest: String::new(),
                 snapshots: HashMap::new(),
@@ -490,8 +509,10 @@ fn make_project_manifest(
     manifest_path: &Path,
     path: &Path,
     description: String,
+    name: String,
 ) -> Result<ProjectManifest, Errors> {
     let project_manifest: ProjectManifest = ProjectManifest {
+        name: name,
         source: path.to_string_lossy().to_string(),
         description: description,
         timestamp: Utc::now(),
@@ -538,6 +559,10 @@ fn update_proj_name_in_main(
             .projects
             .remove(old_name)
             .ok_or(Errors::InternalError)?;
+        let mut proj_manifest = ctx.load_project_manifest(proj_ref.manifest.clone())?;
+        proj_manifest.name = new_name.to_string();
+        proj_manifest.timestamp = Utc::now();
+        ctx.write_project_manifest(proj_ref.manifest.clone(), &proj_manifest)?;
         manifest.projects.insert(new_name.to_string(), proj_ref);
         ctx.write_main_manifest(&manifest)?;
     } else {

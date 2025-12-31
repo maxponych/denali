@@ -43,11 +43,16 @@ fn print_project_tree(
     let mut snap_items: Vec<(&str, &Snapshots)> = proj_manifest
         .snapshots
         .iter()
-        .map(|(n, s)| (n.as_str(), s))
+        .filter_map(|(n, s)| (!s.is_deleted).then(|| (n.as_str(), s)))
         .collect();
+
     snap_items.sort_by(|a, b| b.1.timestamp.cmp(&a.1.timestamp));
 
-    let mut cell_items: Vec<(&String, &CellRef)> = proj_manifest.cells.iter().collect();
+    let mut cell_items: Vec<(&String, &CellRef)> = proj_manifest
+        .cells
+        .iter()
+        .filter_map(|(k, v)| (!v.is_deleted).then(|| (k, v)))
+        .collect();
     cell_items.sort_by_key(|(n, _)| *n);
 
     let total = snap_items.len() + cell_items.len();
@@ -93,7 +98,7 @@ fn print_cell_tree(
     let mut items: Vec<(&str, &Snapshots)> = cell_ref
         .snapshots
         .iter()
-        .map(|(n, s)| (n.as_str(), s))
+        .filter_map(|(n, s)| (!s.is_deleted).then(|| (n.as_str(), s)))
         .collect();
     items.sort_by(|a, b| b.1.timestamp.cmp(&a.1.timestamp));
 
@@ -156,10 +161,12 @@ fn print_all_projects(ctx: &AppContext, manifest: &MainManifest) -> Result<(), E
     projects.sort_by_key(|(name, _)| *name);
 
     for (i, (name, proj_ref)) in projects.into_iter().enumerate() {
-        let proj_manifest = ctx.load_project_manifest(proj_ref.manifest.clone())?;
-        print_project_tree(name, proj_ref, &proj_manifest)?;
-        if i + 1 < manifest.projects.len() {
-            println!();
+        if !proj_ref.is_deleted {
+            let proj_manifest = ctx.load_project_manifest(proj_ref.manifest.clone())?;
+            print_project_tree(name, proj_ref, &proj_manifest)?;
+            if i + 1 < manifest.projects.len() {
+                println!();
+            }
         }
     }
     Ok(())

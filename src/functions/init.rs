@@ -12,8 +12,10 @@ fn make_project_manifest(
     uuid: String,
     path: &Path,
     description: String,
+    name: String,
 ) -> Result<(), Errors> {
     let project_manifest: ProjectManifest = ProjectManifest {
+        name: name,
         source: path.to_string_lossy().to_string(),
         description: description,
         timestamp: Utc::now(),
@@ -124,6 +126,8 @@ fn init_project(
     let uuid = Uuid::new_v4();
 
     let project_ref = ProjectRef {
+        is_deleted: false,
+        timestamp: Utc::now(),
         path: dir.to_string_lossy().to_string(),
         manifest: uuid.to_string(),
         latest: String::new(),
@@ -137,12 +141,19 @@ fn init_project(
             ignore: Vec::new(),
             snapshot_before: String::new(),
             snapshot_after: String::new(),
+            remote: String::new(),
         },
         cells: HashMap::new(),
     };
 
     make_config(&dir, config_data)?;
-    make_project_manifest(ctx, uuid.to_string(), &dir, desc.to_string())?;
+    make_project_manifest(
+        ctx,
+        uuid.to_string(),
+        &dir,
+        desc.to_string(),
+        project.clone(),
+    )?;
     manifest.projects.insert(project.clone(), project_ref);
     Ok(())
 }
@@ -162,7 +173,10 @@ fn init_cell(
 
     proj_ref.cells.push(cell_name.to_string());
     let new_cell = CellRef {
+        is_deleted: false,
+        uuid: Uuid::new_v4().to_string(),
         description: desc.to_string(),
+        timestamp: Utc::now(),
         path: dir.to_string_lossy().to_string(),
         latest: String::new(),
         snapshots: HashMap::new(),

@@ -88,7 +88,7 @@ fn snapshot_dir(ctx: &AppContext, path: &Path) -> Result<[u8; 32], Errors> {
                 .file_name()
                 .ok_or(Errors::DoesntExist(path.to_path_buf()))?;
 
-            let meta = fs::symlink_metadata(path.clone()).unwrap();
+            let meta = fs::symlink_metadata(path.clone())?;
             let mode = meta.mode().to_be_bytes();
 
             let hash = if meta.file_type().is_symlink() {

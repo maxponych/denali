@@ -96,10 +96,20 @@ fn delete_cell_snapshot(
         .get_mut(&cell)
         .ok_or(Errors::InternalError)?;
 
-    cell.snapshots.remove(&name);
+    let snapshot = cell
+        .snapshots
+        .get_mut(&name)
+        .ok_or(Errors::SnapshotDoesNotExist(name))?;
+    snapshot.is_deleted = true;
+    snapshot.timestamp = Utc::now();
 
-    let snapshot = get_latest_snapshot(&cell.snapshots)?;
-    cell.latest = snapshot;
+    cell.timestamp = Utc::now();
+
+    if let Some(latest_snap) = get_latest_snapshot(&cell.snapshots) {
+        cell.latest = latest_snap;
+    } else {
+        cell.latest = String::new();
+    }
 
     ctx.write_project_manifest(uuid, &project_manifest)?;
 
@@ -118,9 +128,20 @@ fn delete_project_snapshot(
         .ok_or(Errors::InternalError)?;
     let uuid = proj_ref.manifest.clone();
     let mut project_manifest = ctx.load_project_manifest(uuid.clone())?;
-    project_manifest.snapshots.remove(&name);
-    let snapshot = get_latest_snapshot(&project_manifest.snapshots)?;
-    proj_ref.latest = snapshot;
+    let snapshot = project_manifest
+        .snapshots
+        .get_mut(&name)
+        .ok_or(Errors::SnapshotDoesNotExist(name))?;
+    snapshot.is_deleted = true;
+    snapshot.timestamp = Utc::now();
+    project_manifest.timestamp = Utc::now();
+
+    if let Some(latest_snap) = get_latest_snapshot(&project_manifest.snapshots) {
+        proj_ref.latest = latest_snap;
+    } else {
+        proj_ref.latest = String::new();
+    }
+
     ctx.write_main_manifest(&manifest)?;
     ctx.write_project_manifest(uuid, &project_manifest)?;
     Ok(())
@@ -141,7 +162,12 @@ fn delete_cell(
     let uuid = proj_ref.manifest.clone();
     let mut project_manifest = ctx.load_project_manifest(uuid.clone())?;
     proj_ref.cells.retain(|n| n != &cell);
-    project_manifest.cells.remove(&cell);
+    let cell_ref = project_manifest
+        .cells
+        .get_mut(&cell)
+        .ok_or(Errors::InternalError)?;
+    cell_ref.is_deleted = true;
+    cell_ref.timestamp = Utc::now();
     ctx.write_project_manifest(uuid.clone(), &project_manifest)?;
     ctx.write_main_manifest(&manifest)?;
     config.cells.remove(&cell).ok_or(Errors::InternalError)?;
@@ -158,20 +184,25 @@ fn delete_project(ctx: &AppContext, project_name: String) -> Result<(), Errors> 
     let uuid = proj_ref.manifest.clone();
     let path = ctx.project_manifest_path(uuid);
     fs::remove_file(path)?;
-    manifest
+    let proj_ref = manifest
         .projects
-        .remove(&project_name)
+        .get_mut(&project_name)
         .ok_or(Errors::InternalError)?;
+    proj_ref.is_deleted = true;
+    proj_ref.timestamp = Utc::now();
     let manifest_data = serde_json::to_vec_pretty(&manifest)?;
     fs::write(ctx.main_manifest_path(), &manifest_data)?;
     Ok(())
 }
 
-fn get_latest_snapshot(snapshots: &HashMap<String, Snapshots>) -> Result<String, Errors> {
+fn get_latest_snapshot(snapshots: &HashMap<String, Snapshots>) -> Option<String> {
     let mut newest_timestamp: Option<DateTime<Utc>> = None;
     let mut snap_meta = String::new();
 
     for (_, snapshot) in snapshots {
+        if snapshot.is_deleted {
+            continue;
+        }
         match newest_timestamp {
             Some(current_newest) if snapshot.timestamp <= current_newest => continue,
             _ => {
@@ -182,8 +213,8 @@ fn get_latest_snapshot(snapshots: &HashMap<String, Snapshots>) -> Result<String,
     }
 
     if snap_meta.is_empty() {
-        return Err(Errors::NoMatches);
+        return None;
     }
 
-    Ok(snap_meta)
+    Some(snap_meta)
 }

@@ -5,6 +5,21 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum Errors {
+    #[error("Snapshot with the name \"{0}\" does not exist")]
+    SnapshotDoesNotExist(String),
+
+    #[error("Failed to open stdin")]
+    StdinFailed,
+
+    #[error("Remote did not return anything")]
+    NoStdout,
+
+    #[error("Hashes did not match!")]
+    HashMismatch,
+
+    #[error("Remote with the name \"{0}\" is not found")]
+    RemoteNotFound(String),
+
     #[error("Command failed \"{0}\"")]
     CommandFailed(String),
 
@@ -35,9 +50,6 @@ pub enum Errors {
     #[error("Project with the name \"{0}\" does not exist")]
     ProjectNotFound(String),
 
-    #[error("Cell with the name \"{0}\" does not exist")]
-    CellNotFound(String),
-
     #[error("Invalid name format: {0}")]
     InvalidNameFormat(String),
 
@@ -65,7 +77,10 @@ pub enum Errors {
     #[error("I/O operation failed:\n {0}")]
     Io(#[from] std::io::Error),
 
-    #[error("JSON error")]
+    #[error("UUID failed:\n {0}")]
+    Uuid(#[from] uuid::Error),
+
+    #[error("JSON error:\n {0}")]
     Json(#[from] serde_json::Error),
 
     #[error("TOML serialisation error")]

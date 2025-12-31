@@ -147,10 +147,7 @@ fn wipe_dir(path: &Path) -> Result<(), Errors> {
 
 fn wipe_cell(ctx: &AppContext, uuid: String, name: String) -> Result<(), Errors> {
     let manifest = ctx.load_project_manifest(uuid)?;
-    let cell = manifest
-        .cells
-        .get(&name)
-        .ok_or(Errors::CellNotFound(name))?;
+    let cell = manifest.cells.get(&name).ok_or(Errors::InternalError)?;
     wipe_dir(&Path::new(&cell.path))?;
     Ok(())
 }
@@ -186,6 +183,12 @@ pub fn load(
         .get(&project_name)
         .ok_or_else(|| Errors::NotInitialised(PathBuf::from(&project)))?;
 
+    if let Some(cell) = &cell_name {
+        if !proj.cells.contains(cell) {
+            return Err(Errors::NotInitialised(PathBuf::from(cell)));
+        }
+    }
+
     if wipe {
         if let Some(p) = path {
             let config_path = Path::new(p).join(".denali.toml");
@@ -200,12 +203,6 @@ pub fn load(
             } else {
                 wipe_project(ctx, proj.manifest.clone())?;
             }
-        }
-    }
-
-    if let Some(cell) = &cell_name {
-        if !proj.cells.contains(cell) {
-            return Err(Errors::NotInitialised(PathBuf::from(cell)));
         }
     }
 
@@ -430,6 +427,7 @@ fn get_project_config(project_manifest: &ProjectManifest) -> Result<DenaliToml, 
                 ignore: Vec::new(),
                 snapshot_before: String::new(),
                 snapshot_after: String::new(),
+                remote: String::new(),
             },
             cells: HashMap::new(),
         };
@@ -447,12 +445,16 @@ fn load_cell(
     let mut newest_timestamp: Option<DateTime<Utc>> = None;
     let mut snap_meta = String::new();
 
-    for (name, snapshot) in &manifest
-        .cells
-        .get(&cell)
-        .ok_or(Errors::InternalError)?
-        .snapshots
-    {
+    let cell_ref = manifest.cells.get(&cell).ok_or(Errors::InternalError)?;
+    if cell_ref.is_deleted {
+        return Ok(());
+    }
+
+    for (name, snapshot) in &cell_ref.snapshots {
+        if snapshot.is_deleted {
+            continue;
+        }
+
         let local_snap = LocalSnapshot {
             name: name.to_string(),
             timestamp: snapshot.timestamp,
@@ -502,6 +504,9 @@ fn load_project(
     let mut snap_meta = String::new();
 
     for (name, snapshot) in &manifest.snapshots {
+        if snapshot.is_deleted {
+            continue;
+        }
         let local_snap = LocalSnapshot {
             name: name.to_string(),
             timestamp: snapshot.timestamp,
@@ -638,7 +643,7 @@ fn restore_cell(
     dest: Option<&Path>,
     manifest: &ProjectManifest,
     name: String,
-    mode: &[u8; 4],
+    mode: &[u8],
 ) -> Result<(), Errors> {
     let tree = ctx.load_object(hash)?;
     let entries = parse_tree(&tree)?;
@@ -661,7 +666,7 @@ fn restore_cell(
         return Err(Errors::NotADir(destination));
     }
 
-    let perms = u32::from_be_bytes(mode.clone()) & 0x0FFF;
+    let perms = u32::from_be_bytes(mode.try_into()?) & 0x0FFF;
     let mut permissions = fs::metadata(&destination)?.permissions();
     permissions.set_mode(perms);
     fs::set_permissions(&destination, permissions)?;

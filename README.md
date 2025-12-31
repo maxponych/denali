@@ -85,6 +85,15 @@ List templates
 ### `denali tmpl remove <name>`
 Remove template from manifests. In order to clean up you still need to call `denali clean`
 
+### `denali sync <name> <remote>`
+Sync storage and manifests with remote host (use `all` to sync all projects). Requirements for host is accept SSH connections and have denali installed. SSH uses `BatchMode=yes` so authentication to the host must be established beforehand.
+
+### `denali remote add <name> <host>`
+Add remote to remotes list. Format for host `user@host:/path/to/use`.
+
+### `denali remote remove <name>`
+Remove remote from remotes list.
+
 ## Config file -  `.denali.toml`
 The config file will be generated on project initialisation inside the project root. In this file you can specify ignore, filters, locks, name, description, path. Config will not affect load if load is called with `--path` argument.
 
@@ -148,17 +157,16 @@ Only `commands` and `placeholders` are supported for template configs at the mom
 
 ## Current Limitations
 
-- Local storage only (remote sync planned)
 - Missing: diff, merge strategies
 
 ## Roadmap
 
 - [x] `check` command (manifest synchronisation with config file)
 - [x] Templates
-- [ ] Remote sync (push/pull)
+- [x] Remote sync (push/pull)
 - [ ] Diff command
 - [x] Snapshot cleanup/pruning
-- [ ] Merge strategies
+- [ ] Merge strategies for snapshots
 
 ## Contributing
 

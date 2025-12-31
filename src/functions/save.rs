@@ -8,7 +8,7 @@ use crate::utils::{
 use std::{
     collections::HashMap,
     fs::{self, File},
-    io::Read,
+    io::{self, Read},
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
 };
@@ -48,9 +48,9 @@ pub fn save(
             ctx,
             uuid,
             desc,
-            &manifest
+            &mut manifest
                 .projects
-                .get(&project)
+                .get_mut(&project)
                 .ok_or(Errors::InternalError)?
                 .cells,
         )?;
@@ -113,6 +113,7 @@ fn save_cell(
         let hex = hex::encode(hash);
         let snapshot: Snapshots = Snapshots {
             hash: hex.clone(),
+            is_deleted: false,
             timestamp: Utc::now(),
         };
         cell_ref.latest = hex;
@@ -139,7 +140,7 @@ fn make_project_save(
     ctx: &AppContext,
     uuid: String,
     description: &str,
-    cells: &Vec<String>,
+    cells: &mut Vec<String>,
 ) -> Result<HashMap<String, ([u8; 32], [u8; 4])>, Errors> {
     let proj_manifest: ProjectManifest = ctx.load_project_manifest(uuid)?;
     let source_dir = &proj_manifest.source;
@@ -148,6 +149,7 @@ fn make_project_save(
     let mut cells_map: HashMap<String, PathBuf> = HashMap::new();
     let mut ignore_cells: HashMap<String, GlobSet> = HashMap::new();
     let mut root_ignore = config.root.ignore;
+    cells.sort();
     for cell in cells {
         let path = proj_manifest
             .cells
@@ -204,6 +206,7 @@ pub fn update_all_manifests(
             root_hash = Some(hash_hex.clone());
             let snapshot: Snapshots = Snapshots {
                 hash: hash_hex,
+                is_deleted: false,
                 timestamp: Utc::now(),
             };
             project_manifest
@@ -217,6 +220,7 @@ pub fn update_all_manifests(
 
             let snapshot: Snapshots = Snapshots {
                 hash: hash_hex.clone(),
+                is_deleted: false,
                 timestamp: Utc::now(),
             };
             entry_man.snapshots.insert(name.to_string(), snapshot);
@@ -340,28 +344,30 @@ pub fn make_tree(
     }
 
     if path.is_dir() {
-        if !fs::read_dir(path)?.next().is_none() {
-            for entry in fs::read_dir(path)? {
-                let entry = entry?;
-                let path = entry.path();
-                let name_os = path
+        if fs::read_dir(path)?.next().is_some() {
+            let mut files = fs::read_dir(path)?
+                .map(|res| res.map(|e| e.path()))
+                .collect::<Result<Vec<_>, io::Error>>()?;
+            files.sort();
+            for entry in files {
+                let name_os = entry
                     .file_name()
-                    .ok_or(Errors::DoesntExist(path.to_path_buf()))?;
+                    .ok_or(Errors::DoesntExist(entry.to_path_buf()))?;
 
-                if ignore.is_match(path.strip_prefix(&root_path).unwrap_or(&path)) {
+                if ignore.is_match(entry.strip_prefix(&root_path).unwrap_or(&entry)) {
                     continue;
                 }
 
-                let meta = fs::symlink_metadata(path.clone()).unwrap();
+                let meta = fs::symlink_metadata(entry.clone())?;
                 let mode = meta.mode().to_be_bytes();
 
                 let hash = if meta.file_type().is_symlink() {
-                    let target = fs::read_link(&path)?;
+                    let target = fs::read_link(&entry)?;
                     ctx.save_object(target.to_string_lossy().as_bytes().to_vec())?
                 } else if meta.is_dir() {
-                    make_tree(ctx, &path, &ignore, &HashMap::new(), root_path)?
+                    make_tree(ctx, &entry, &ignore, &HashMap::new(), root_path)?
                 } else {
-                    hash_file(ctx, &path)?
+                    hash_file(ctx, &entry)?
                 };
 
                 entries.push(TreeStruct {

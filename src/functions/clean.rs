@@ -2,7 +2,7 @@ use std::{collections::HashSet, fs, io::Read, path::Path};
 
 use zstd::Decoder;
 
-use crate::utils::{Errors, context::AppContext};
+use crate::utils::{Errors, TreeStruct, context::AppContext, file_type::FileType};
 
 pub fn clean(ctx: &AppContext, is_dry: bool) -> Result<(), Errors> {
     let mut objects = HashSet::new();
@@ -95,13 +95,19 @@ fn mark_entries(
     let mut good_entries: HashSet<String> = HashSet::new();
     let manifest = ctx.load_main_manifest()?;
     for (_, project_ref) in &manifest.projects {
-        let project_manifest = ctx.load_project_manifest(project_ref.manifest.clone())?;
-        for (_, snapshot) in &project_manifest.snapshots {
-            good_entries.insert(snapshot.hash.clone());
-        }
-        for (_, cell_ref) in &project_manifest.cells {
-            for (_, snapshot) in &cell_ref.snapshots {
+        if !project_ref.is_deleted {
+            let project_manifest = ctx.load_project_manifest(project_ref.manifest.clone())?;
+            for (_, snapshot) in &project_manifest.snapshots {
                 good_entries.insert(snapshot.hash.clone());
+            }
+            for (_, cell_ref) in &project_manifest.cells {
+                if !cell_ref.is_deleted {
+                    for (_, snapshot) in &cell_ref.snapshots {
+                        if !snapshot.is_deleted {
+                            good_entries.insert(snapshot.hash.clone());
+                        }
+                    }
+                }
             }
         }
     }
@@ -163,9 +169,11 @@ fn mark_objects(
     good_entries.insert(hash.to_string());
 
     for entry in entries {
-        if entry.mode == "20" {
+        let mode_u32 = u32::from_be_bytes(entry.mode);
+        let mode = FileType::from_mode(mode_u32);
+        if mode == FileType::Cell {
             good_entries.insert(hex::encode(entry.hash));
-        } else if entry.mode == "30" {
+        } else if mode == FileType::Directory {
             snapshots.remove(&hex::encode(entry.hash));
             let snap = ctx.load_snapshot(hex::encode(entry.hash))?;
             mark_objects(ctx, &snap.root, snapshots, good_entries)?;
@@ -174,11 +182,6 @@ fn mark_objects(
         }
     }
     Ok(())
-}
-
-struct TreeStruct {
-    mode: String,
-    hash: [u8; 32],
 }
 
 fn parse_tree(tree: &Vec<u8>) -> Result<Vec<TreeStruct>, Errors> {
@@ -190,7 +193,7 @@ fn parse_tree(tree: &Vec<u8>) -> Result<Vec<TreeStruct>, Errors> {
         while tree[i] != b' ' {
             i += 1;
         }
-        let mode = String::from_utf8_lossy(&tree[mode_start..i]).to_string();
+        let mode: [u8; 4] = tree[mode_start..i].try_into()?;
         i += 1;
 
         while tree[i] != 0 {
@@ -202,6 +205,7 @@ fn parse_tree(tree: &Vec<u8>) -> Result<Vec<TreeStruct>, Errors> {
         i += 32;
 
         entries.push(TreeStruct {
+            name: String::new(),
             mode: mode,
             hash: hash,
         });

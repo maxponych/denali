@@ -13,6 +13,8 @@ pub struct ProjectConfig {
     pub snapshot_before: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub snapshot_after: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub remote: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

@@ -66,6 +66,23 @@ pub enum Commands {
     List {
         project: String,
     },
+    Sync {
+        project: String,
+        remote: String,
+    },
+    Remote {
+        #[command(subcommand)]
+        sub: RemoteCommands,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum RemoteCommands {
+    Receive,
+    Send,
+    Manifest { name: String },
+    Add { name: String, host: String },
+    Remove { name: String },
 }
 
 #[derive(Subcommand)]
